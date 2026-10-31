@@ -1,0 +1,484 @@
+//@version=6
+indicator("Swing Fixed Range Volume Profile", shorttitle = "Swing FRVP", overlay = true, max_boxes_count = 500, max_lines_count = 100, max_labels_count = 500)
+
+// ───── Inputs
+const string G_RANGE = "Range"
+const string G_PROF  = "Profile"
+const string G_NODES = "HVN / LVN"
+const string G_SIG   = "Signals"
+const string G_TRADE = "Targets & stops"
+const string G_STYLE = "Style"
+
+startTime = input.time(timestamp("2026-03-30"), "Start (click a bar)", confirm = true, group = G_RANGE)
+useEnd    = input.bool(false, "Stop at end date", inline = "end", group = G_RANGE)
+endTime   = input.time(timestamp("2099-12-31"), "", inline = "end", group = G_RANGE)
+
+rows      = input.int(120, "Rows", minval = 20, maxval = 200, group = G_PROF)
+vaPct     = input.float(70.0, "Value Area %", minval = 10, maxval = 95, group = G_PROF)
+side      = input.string("Right (price axis)", "Histogram side", options = ["Right (price axis)", "Left (range start)"], group = G_PROF)
+widthBars = input.int(40, "Histogram width (bars)", minval = 10, maxval = 150, group = G_PROF)
+rightGap  = input.int(8, "Gap from last bar (bars)", minval = 2, maxval = 30, group = G_PROF)
+showVol   = input.bool(true, "Show volume on POC / HVN / LVN labels", group = G_PROF)
+
+showNodes = input.bool(true, "Show HVN / LVN lines", group = G_NODES)
+nodeWin   = input.int(5, "Node detection window (rows)", minval = 2, maxval = 9, group = G_NODES)
+maxNodes  = input.int(3, "Max nodes of each kind", minval = 1, maxval = 10, group = G_NODES)
+
+showSig    = input.bool(true, "Show BUY / SELL signals", group = G_SIG)
+maxSignals = input.int(40, "Max signals shown (most recent)", minval = 1, maxval = 200, group = G_SIG)
+cooldown   = input.int(3, "Cooldown: skip a signal if the opposite setup fired within (bars, 0 = off)", minval = 0, maxval = 20, group = G_SIG)
+
+atrLen    = input.int(14, "ATR length", minval = 1, group = G_TRADE)
+minGapAtr = input.float(0.5, "Min distance to a target (x ATR)", minval = 0, step = 0.1, group = G_TRADE)
+stopBuf   = input.float(0.25, "Stop buffer beyond signal bar (x ATR)", minval = 0, step = 0.05, group = G_TRADE)
+minRR     = input.float(2.0, "Min reward:risk to Target 1 (0 = off)", minval = 0, step = 0.1, group = G_TRADE)
+maxHold   = input.int(5, "Max bars per trade (for stats)", minval = 1, maxval = 200, group = G_TRADE)
+showPlan  = input.bool(true, "Draw trade plan for the latest signal", group = G_TRADE)
+
+upCol     = input.color(color.new(color.teal, 35), "Up volume", group = G_STYLE)
+dnCol     = input.color(color.new(color.red, 35), "Down volume", group = G_STYLE)
+pocCol    = input.color(color.yellow, "POC", group = G_STYLE)
+vaCol     = input.color(color.blue, "VAH / VAL", group = G_STYLE)
+hvnCol    = input.color(color.orange, "HVN", group = G_STYLE)
+lvnCol    = input.color(color.gray, "LVN", group = G_STYLE)
+buyCol    = input.color(color.green, "BUY / target", group = G_STYLE)
+sellCol   = input.color(color.red, "SELL / stop", group = G_STYLE)
+showVaBox = input.bool(true, "Shade the Value Area", group = G_STYLE)
+showTable = input.bool(true, "Show status table", group = G_STYLE)
+tablePos  = input.string("Bottom right", "Table position", options = ["Top right", "Bottom right", "Bottom left", "Top left"], group = G_STYLE)
+compact   = input.bool(false, "Compact table (trade plan only)", group = G_STYLE)
+
+fade(color c, int extra) => color.new(c, math.min(100, color.t(c) + extra))
+
+// Solid label background so the text stays readable on top of its own line
+labelBg = color.new(chart.bg_color, 0)
+
+atrNow = nz(ta.atr(atrLen), high - low)
+
+// ───── Signal rules (checked on each bar's close, against the profile levels)
+//   BUY : bounce off VAL, failed breakdown (back above VAL), retest of VAH holds
+//   SELL: rejection at VAH, failed breakout (back below VAH), retest of VAL fails
+evalSig(float c, float o, float h, float l, float pc, float lvlHigh, float lvlLow, float lvlPoc) =>
+    int dir = 0
+    string why = ""
+    if not na(lvlHigh) and not na(lvlLow) and not na(lvlPoc)
+        bool bull = c > o
+        bool bear = c < o
+        if pc < lvlLow and c > lvlLow and bull
+            dir := 1
+            why := "Failed breakdown: back above VAL"
+        else if l <= lvlLow and c > lvlLow and bull
+            dir := 1
+            why := "Bounce off VAL"
+        else if pc > lvlHigh and l <= lvlHigh and c > lvlHigh and bull
+            dir := 1
+            why := "Retest of VAH holds"
+        else if pc > lvlHigh and c < lvlHigh
+            dir := -1
+            why := "Failed breakout: back below VAH"
+        else if h >= lvlHigh and c < lvlHigh and bear
+            dir := -1
+            why := "Rejection at VAH"
+        else if pc < lvlLow and h >= lvlLow and c < lvlLow and bear
+            dir := -1
+            why := "Retest of VAL fails"
+    [dir, why]
+
+// ───── Targets: the next two volume levels (POC, VAH, VAL, HVNs) in the trade's direction.
+//       Past the last level, fall back to 2 and 4 ATR.
+targetsFor(array<float> lv, float px, int dir, float atrV) =>
+    float t1 = na
+    float t2 = na
+    float minGap = minGapAtr * atrV
+    for x in lv
+        float g = (x - px) * dir
+        if g >= minGap
+            if na(t1) or g < (t1 - px) * dir
+                t2 := t1
+                t1 := x
+            else if na(t2) or g < (t2 - px) * dir
+                t2 := x
+    if na(t1)
+        t1 := px + dir * 2 * atrV
+    if na(t2)
+        t2 := t1 + dir * 2 * atrV
+    [t1, t2]
+
+// ───── Collect bars inside the range
+inRange = time >= startTime and (not useEnd or time <= endTime)
+
+var array<float> aHigh  = array.new<float>()
+var array<float> aLow   = array.new<float>()
+var array<float> aOpen  = array.new<float>()
+var array<float> aClose = array.new<float>()
+var array<float> aVol   = array.new<float>()
+var array<float> aAtr   = array.new<float>()
+var array<bool>  aUp    = array.new<bool>()
+var int firstBar = na
+var int lastBar  = na
+
+if inRange and not na(volume)
+    aHigh.push(high)
+    aLow.push(low)
+    aOpen.push(open)
+    aClose.push(close)
+    aVol.push(volume)
+    aAtr.push(atrNow)
+    aUp.push(close >= open)
+    if na(firstBar)
+        firstBar := bar_index
+    lastBar := bar_index
+
+// ───── State
+var array<box>   boxes  = array.new<box>()
+var array<line>  lines  = array.new<line>()
+var array<label> labels = array.new<label>()
+var array<float> lvls   = array.new<float>()
+tblPos = tablePos == "Top right" ? position.top_right : tablePos == "Bottom right" ? position.bottom_right : tablePos == "Bottom left" ? position.bottom_left : position.top_left
+var table tbl = table.new(tblPos, 2, 13,bgcolor = color.new(color.black, 20), border_width = 1)
+txtSize = compact ? size.tiny : size.small
+
+var float poc = na
+var float vah = na
+var float val = na
+
+// Latest signal and history stats, filled on the last bar
+var int    lastDir = 0
+var string lastWhy = ""
+var float  lastEnt = na
+var float  lastT1  = na
+var float  lastT2  = na
+var float  lastSL  = na
+var float  lastRR  = na
+var int    lastAgo = na
+var string lastRes = ""
+var int    stSig   = 0
+var int    stT1    = 0
+var int    stT2    = 0
+var int    stStop  = 0
+var int    stExp   = 0
+var int    stOpen  = 0
+
+drawLevel(float price, color c, string name, int w, string st, string suffix, int labX, string labStyle) =>
+    lines.push(line.new(firstBar, price, bar_index, price, extend = extend.right, color = c, width = w, style = st))
+    labels.push(label.new(labX, price, name + " " + str.tostring(price, format.mintick) + suffix, style = labStyle, color = labelBg, textcolor = c, size = size.small))
+
+volText(float v, float total) => " | Vol " + str.tostring(v, format.volume) + " (" + str.tostring(v / total * 100, "#.#") + "%)"
+
+putRow(int r, string k, string v, color bg) =>
+    tbl.cell(0, r, k, text_color = color.white, text_size = txtSize)
+    tbl.cell(1, r, v, text_color = color.white, bgcolor = bg, text_size = txtSize)
+
+pctFrom(float p, float base) => str.tostring(p, format.mintick) + "  (" + (p >= base ? "+" : "") + str.tostring((p / base - 1) * 100, "#.##") + "% from entry)"
+
+pctTxt(float p) => str.tostring(p, format.mintick) + "  (" + str.tostring((p / close - 1) * 100, "#.##") + "%)"
+
+// True when the opposite setup fired within the previous `cooldown` bars (price chopping at a level)
+choppy(int i, int d) =>
+    bool hit = false
+    if cooldown > 0
+        for k = 1 to cooldown
+            if i - k >= 1
+                [dk, wk] = evalSig(aClose.get(i - k), aOpen.get(i - k), aHigh.get(i - k), aLow.get(i - k), aClose.get(i - k - 1), vah, val, poc)
+                if dk == -d
+                    hit := true
+    hit
+
+// ───── Build the profile on the last bar
+if barstate.islast and aHigh.size() > 0
+    for bx in boxes
+        bx.delete()
+    boxes.clear()
+    for ln in lines
+        ln.delete()
+    lines.clear()
+    for lb in labels
+        lb.delete()
+    labels.clear()
+    lvls.clear()
+    lastDir := 0
+    stSig   := 0
+    stT1    := 0
+    stT2    := 0
+    stStop  := 0
+    stExp   := 0
+    stOpen  := 0
+
+    float pMin = aLow.min()
+    float pMax = aHigh.max()
+    float step = (pMax - pMin) / rows
+
+    if step > 0
+        array<float> upV = array.new<float>(rows, 0.0)
+        array<float> dnV = array.new<float>(rows, 0.0)
+
+        // Spread each bar's volume across the rows its high-low range covers
+        for i = 0 to aHigh.size() - 1
+            float bh = aHigh.get(i)
+            float bl = aLow.get(i)
+            float bv = aVol.get(i)
+            int r0 = math.min(rows - 1, math.floor((bl - pMin) / step))
+            int r1 = math.min(rows - 1, math.floor((bh - pMin) / step))
+            for r = r0 to r1
+                float share = bh > bl ? (math.min(bh, pMin + (r + 1) * step) - math.max(bl, pMin + r * step)) / (bh - bl) : 1.0
+                if aUp.get(i)
+                    upV.set(r, upV.get(r) + bv * share)
+                else
+                    dnV.set(r, dnV.get(r) + bv * share)
+
+        array<float> tot = array.new<float>(rows, 0.0)
+        for r = 0 to rows - 1
+            tot.set(r, upV.get(r) + dnV.get(r))
+        float total = tot.sum()
+
+        if total > 0
+            float maxV   = tot.max()
+            int   pocIdx = tot.indexof(maxV)
+
+            // Value Area: expand from POC toward the heavier neighbour
+            int   upIdx  = pocIdx
+            int   dnIdx  = pocIdx
+            float acc    = maxV
+            float target = total * vaPct / 100
+            while acc < target and (upIdx < rows - 1 or dnIdx > 0)
+                float vUp = upIdx < rows - 1 ? tot.get(upIdx + 1) : -1.0
+                float vDn = dnIdx > 0 ? tot.get(dnIdx - 1) : -1.0
+                if vUp >= vDn
+                    upIdx += 1
+                    acc += vUp
+                else
+                    dnIdx -= 1
+                    acc += vDn
+
+            poc := pMin + (pocIdx + 0.5) * step
+            vah := pMin + (upIdx + 1) * step
+            val := pMin + dnIdx * step
+
+            bool   isRight = side == "Right (price axis)"
+            int    xAnchor = bar_index + rightGap + widthBars
+            // Level labels sit in the free space right of the histogram (or right of the last bar)
+            int    labX    = isRight ? xAnchor + 1 : bar_index + 3
+            string labSt   = label.style_label_left
+
+            // Value Area shading
+            if showVaBox
+                boxes.push(box.new(firstBar, vah, bar_index, val, border_color = color(na), bgcolor = color.new(vaCol, 92)))
+
+            // Histogram: price on the y axis, volume as bar length
+            for r = 0 to rows - 1
+                float rowV = tot.get(r)
+                if rowV > 0
+                    bool  inVa = r >= dnIdx and r <= upIdx
+                    int   wUp  = math.round(upV.get(r) / maxV * widthBars)
+                    int   wAll = math.max(1, math.round(rowV / maxV * widthBars))
+                    int   x0   = isRight ? xAnchor - wAll : firstBar
+                    float yTop = pMin + (r + 1) * step
+                    float yBot = pMin + r * step
+                    if wUp > 0
+                        boxes.push(box.new(x0, yTop, x0 + wUp, yBot, border_color = color(na), border_width = 0, bgcolor = inVa ? upCol : fade(upCol, 45)))
+                    if wAll > wUp
+                        boxes.push(box.new(x0 + wUp, yTop, x0 + wAll, yBot, border_color = color(na), border_width = 0, bgcolor = inVa ? dnCol : fade(dnCol, 45)))
+
+            drawLevel(poc, pocCol, "POC", 2, line.style_solid, showVol ? volText(maxV, total) : "", labX, labSt)
+            drawLevel(vah, vaCol, "VAH", 1, line.style_solid, "", labX, labSt)
+            drawLevel(val, vaCol, "VAL", 1, line.style_solid, "", labX, labSt)
+            lvls.push(poc)
+            lvls.push(vah)
+            lvls.push(val)
+
+            // HVN = local volume peaks, LVN = local volume gaps inside the Value Area
+            // (gaps outside it are mostly empty rows left by fast moves)
+            float mean   = total / rows
+            float vaMean = acc / (upIdx - dnIdx + 1)
+            array<int>   hIdx = array.new<int>()
+            array<float> hVol = array.new<float>()
+            array<int>   lIdx = array.new<int>()
+            array<float> lVol = array.new<float>()
+            for r = nodeWin to rows - 1 - nodeWin
+                float rv = tot.get(r)
+                bool isPeak   = true
+                bool isTrough = true
+                for k = r - nodeWin to r + nodeWin
+                    if k != r
+                        float ov = tot.get(k)
+                        if ov > rv
+                            isPeak := false
+                        if ov < rv
+                            isTrough := false
+                if isPeak and r != pocIdx and rv > mean and (hIdx.size() == 0 or r - hIdx.last() > nodeWin)
+                    hIdx.push(r)
+                    hVol.push(rv)
+                if isTrough and rv > 0 and r >= dnIdx and r <= upIdx and rv < vaMean * 0.75 and (lIdx.size() == 0 or r - lIdx.last() > nodeWin)
+                    lIdx.push(r)
+                    lVol.push(rv)
+
+            // Every HVN is a possible target, even the ones not drawn
+            for hi in hIdx
+                lvls.push(pMin + (hi + 0.5) * step)
+
+            if showNodes
+                if hIdx.size() > 0
+                    array<float> hTmp = hVol.copy()
+                    for j = 0 to math.min(maxNodes, hIdx.size()) - 1
+                        float hBest = hTmp.max()
+                        int   hPos  = hTmp.indexof(hBest)
+                        drawLevel(pMin + (hIdx.get(hPos) + 0.5) * step, hvnCol, "HVN", 1, line.style_dashed, showVol ? volText(hBest, total) : "", labX, labSt)
+                        hTmp.set(hPos, -1.0)
+                if lIdx.size() > 0
+                    array<float> lTmp = lVol.copy()
+                    for j = 0 to math.min(maxNodes, lIdx.size()) - 1
+                        float lBest = lTmp.min()
+                        int   lPos  = lTmp.indexof(lBest)
+                        drawLevel(pMin + (lIdx.get(lPos) + 0.5) * step, lvnCol, "LVN", 1, line.style_dotted, showVol ? volText(lBest, total) : "", labX, labSt)
+                        lTmp.set(lPos, 1.0e18)
+
+            // Signals: targets, stop, outcome of each past signal, and markers (newest first)
+            int n = aHigh.size()
+            int shown = 0
+            int lastIdx = na
+            if n > 1
+                for i = n - 1 to 1
+                    [d, why] = evalSig(aClose.get(i), aOpen.get(i), aHigh.get(i), aLow.get(i), aClose.get(i - 1), vah, val, poc)
+                    if d != 0 and not choppy(i, d)
+                        float ent = aClose.get(i)
+                        float av  = aAtr.get(i)
+                        [t1, t2] = targetsFor(lvls, ent, d, av)
+                        float sl = d == 1 ? aLow.get(i) - stopBuf * av : aHigh.get(i) + stopBuf * av
+                        float rr = math.abs(t1 - ent) / math.max(math.abs(ent - sl), syminfo.mintick)
+                        if minRR == 0 or rr >= minRR
+                            bool hit1    = false
+                            bool hit2    = false
+                            bool stopped = false
+                            bool windowDone = i + maxHold <= n - 1
+                            if i < n - 1
+                                for j = i + 1 to math.min(n - 1, i + maxHold)
+                                    float fh = aHigh.get(j)
+                                    float fl = aLow.get(j)
+                                    if d == 1 ? fl <= sl : fh >= sl
+                                        stopped := true
+                                        break
+                                    if d == 1 ? fh >= t1 : fl <= t1
+                                        hit1 := true
+                                    if d == 1 ? fh >= t2 : fl <= t2
+                                        hit2 := true
+                                        break
+                            // A trade counts once it hit something or its window ran out; otherwise it is still open
+                            if hit1 or stopped or windowDone
+                                stSig  += 1
+                                stT1   += hit1 ? 1 : 0
+                                stT2   += hit2 ? 1 : 0
+                                stStop += stopped and not hit1 ? 1 : 0
+                                stExp  += not hit1 and not stopped ? 1 : 0
+                            else
+                                stOpen += 1
+                            string res = hit2 ? "Target 2 hit" : hit1 ? (stopped ? "Target 1 hit, then stopped" : "Target 1 hit") : stopped ? "Stopped out" : windowDone ? "Expired: nothing hit within " + str.tostring(maxHold) + " bars" : "Open"
+
+                            if lastDir == 0
+                                lastDir := d
+                                lastWhy := why
+                                lastEnt := ent
+                                lastT1  := t1
+                                lastT2  := t2
+                                lastSL  := sl
+                                lastRR  := rr
+                                lastAgo := n - 1 - i
+                                lastIdx := i
+                                // Follow the latest trade all the way to today, not just maxHold bars
+                                int bT1 = na
+                                int bT2 = na
+                                int bSL = na
+                                if i < n - 1
+                                    for j = i + 1 to n - 1
+                                        float ph = aHigh.get(j)
+                                        float pl = aLow.get(j)
+                                        if d == 1 ? pl <= sl : ph >= sl
+                                            bSL := j - i
+                                            break
+                                        if na(bT1) and (d == 1 ? ph >= t1 : pl <= t1)
+                                            bT1 := j - i
+                                        if d == 1 ? ph >= t2 : pl <= t2
+                                            bT2 := j - i
+                                            break
+                                lastRes := not na(bT2) ? "T2 hit after " + str.tostring(bT2) + " bars" : not na(bT1) ? "T1 hit after " + str.tostring(bT1) + " bars" + (not na(bSL) ? ", then stopped after " + str.tostring(bSL) : ", T2 still open") : not na(bSL) ? "Stopped after " + str.tostring(bSL) + " bars" : "Open: no target or stop hit yet"
+
+                            if showSig and shown < maxSignals
+                                shown += 1
+                                string tip = why + "\nEntry " + str.tostring(ent, format.mintick) + "\nT1 " + str.tostring(t1, format.mintick) + "  T2 " + str.tostring(t2, format.mintick) + "\nStop " + str.tostring(sl, format.mintick) + "  R:R " + str.tostring(rr, "#.#") + "\nResult (first " + str.tostring(maxHold) + " bars): " + res
+                                if d == 1
+                                    labels.push(label.new(firstBar + i, aLow.get(i), "BUY", style = label.style_label_up, color = buyCol, textcolor = color.white, size = size.small, tooltip = tip))
+                                else
+                                    labels.push(label.new(firstBar + i, aHigh.get(i), "SELL", style = label.style_label_down, color = sellCol, textcolor = color.white, size = size.small, tooltip = tip))
+
+            // Trade plan for the latest signal: reward and risk zones plus target/stop lines
+            if showPlan and lastDir != 0
+                int px1 = firstBar + lastIdx
+                int px2 = bar_index + 1
+                boxes.push(box.new(px1, math.max(lastEnt, lastT1), px2, math.min(lastEnt, lastT1), border_color = color(na), bgcolor = color.new(buyCol, 85)))
+                boxes.push(box.new(px1, math.max(lastEnt, lastSL), px2, math.min(lastEnt, lastSL), border_color = color(na), bgcolor = color.new(sellCol, 85)))
+                lines.push(line.new(px1, lastEnt, px2, lastEnt, color = color.gray, width = 1))
+                lines.push(line.new(px1, lastT1, px2, lastT1, color = buyCol, width = 2))
+                lines.push(line.new(px1, lastT2, px2, lastT2, color = buyCol, width = 1, style = line.style_dashed))
+                lines.push(line.new(px1, lastSL, px2, lastSL, color = sellCol, width = 2))
+                // Plan labels start at the signal bar and run right, inside the plan zone
+                labels.push(label.new(px1, lastT1, "T1 " + str.tostring(lastT1, format.mintick), style = label.style_label_left, color = labelBg, textcolor = buyCol, size = size.small))
+                labels.push(label.new(px1, lastT2, "T2 " + str.tostring(lastT2, format.mintick), style = label.style_label_left, color = labelBg, textcolor = buyCol, size = size.small))
+                labels.push(label.new(px1, lastSL, "Stop " + str.tostring(lastSL, format.mintick), style = label.style_label_left, color = labelBg, textcolor = sellCol, size = size.small))
+
+// ───── Live signal (drives the alerts)
+[liveRaw, liveWhy] = evalSig(close, open, high, low, close[1], vah, val, poc)
+[liveT1, liveT2] = targetsFor(lvls, close, liveRaw == 0 ? 1 : liveRaw, atrNow)
+float liveSL = liveRaw == 1 ? low - stopBuf * atrNow : high + stopBuf * atrNow
+float liveRR = math.abs(liveT1 - close) / math.max(math.abs(close - liveSL), syminfo.mintick)
+bool  liveChop = false
+if cooldown > 0 and liveRaw != 0
+    for k = 1 to cooldown
+        [dk, wk] = evalSig(close[k], open[k], high[k], low[k], close[k + 1], vah, val, poc)
+        if dk == -liveRaw
+            liveChop := true
+int   liveDir = liveRaw != 0 and not liveChop and (minRR == 0 or liveRR >= minRR) ? liveRaw : 0
+
+// ───── Status table
+if barstate.islast and showTable
+    string state = na(poc) ? "No volume data on this symbol (use SPY, not SPX)" : close > vah ? "Above value: uptrend, buy pullbacks to VAH/HVN" : close < val ? "Below value: downtrend, sell rallies to VAL/HVN" : "Inside value: range, VAL to POC to VAH"
+    color  stCol = na(poc) ? color.red : close > vah ? color.teal : close < val ? color.red : color.gray
+    string sigTx = lastDir == 0 ? "No signal in range" : (lastDir == 1 ? "BUY" : "SELL") + " (" + str.tostring(lastAgo) + " bars ago): " + lastWhy
+    color  sigCl = lastDir == 1 ? buyCol : lastDir == -1 ? sellCol : color.gray
+    bool   has   = lastDir != 0
+    string nTx   = "/" + str.tostring(stSig)
+    string hist  = stSig == 0 ? "No completed signals yet" : "Within " + str.tostring(maxHold) + " bars: T1 " + str.tostring(stT1) + nTx + " (" + str.tostring(stT1 * 100.0 / stSig, "#") + "%), T2 " + str.tostring(stT2) + nTx + " (" + str.tostring(stT2 * 100.0 / stSig, "#") + "%), stopped " + str.tostring(stStop) + nTx + ", expired " + str.tostring(stExp) + nTx + (stOpen > 0 ? ", still open " + str.tostring(stOpen) : "")
+
+    // Compact mode keeps only the trade plan rows
+    int rw = 0
+    if not compact
+        putRow(rw, "State", state, stCol)
+        rw += 1
+    putRow(rw, "Latest signal", sigTx, sigCl)
+    rw += 1
+    putRow(rw, "Entry", has ? str.tostring(lastEnt, format.mintick) : "-", color(na))
+    rw += 1
+    putRow(rw, "Now", has ? pctFrom(close, lastEnt) : str.tostring(close, format.mintick), color(na))
+    rw += 1
+    putRow(rw, "Target 1", has ? pctFrom(lastT1, lastEnt) : "-", color(na))
+    rw += 1
+    putRow(rw, "Target 2", has ? pctFrom(lastT2, lastEnt) : "-", color(na))
+    rw += 1
+    putRow(rw, "Stop", has ? pctFrom(lastSL, lastEnt) : "-", color(na))
+    rw += 1
+    putRow(rw, "R:R to T1", has ? str.tostring(lastRR, "#.#") : "-", color(na))
+    rw += 1
+    putRow(rw, "Status (to today)", has ? lastRes : "-", color(na))
+    rw += 1
+    if not compact
+        putRow(rw, "History", hist, color(na))
+        rw += 1
+        putRow(rw, "VAH", na(vah) ? "-" : pctTxt(vah), color(na))
+        rw += 1
+        putRow(rw, "POC", na(poc) ? "-" : pctTxt(poc), color(na))
+        rw += 1
+        putRow(rw, "VAL", na(val) ? "-" : pctTxt(val), color(na))
+
+// ───── Alerts (Create Alert → condition: Swing FRVP → "Once per bar close")
+alertcondition(liveDir == 1,  "BUY signal",  "{{ticker}}: BUY signal from volume profile")
+alertcondition(liveDir == -1, "SELL signal", "{{ticker}}: SELL signal from volume profile")
+alertcondition(ta.crossover(close, vah),  "Breakout above VAH",  "{{ticker}} closed above VAH: value moving up")
+alertcondition(ta.crossunder(close, val), "Breakdown below VAL", "{{ticker}} closed below VAL: value moving down")
