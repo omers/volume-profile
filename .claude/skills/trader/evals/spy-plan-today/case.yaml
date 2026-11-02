@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: spy-plan-today
+expected_outcome: |
+  Runs swing_frvp.py and the bars-to-target sweep on SPY, reports state, levels and the open 14 Oct SELL (T1 hit, T2 open), gives a data-based holding window and an expiry/strike plan with trading-day counts, framed as model output.

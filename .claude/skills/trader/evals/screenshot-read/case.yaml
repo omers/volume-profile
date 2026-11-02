@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: screenshot-read
+expected_outcome: |
+  Reads the screenshot levels (VAH 774, POC ~769.6, LVN 760.67, HVN 747.98/739.09/709.89, VAL 732.11, hard stop 781.24), estimates price ~754, then confirms with the script and gives scenarios plus an option plan for the open signal.
+context:
+  scaffold_script: place-files.sh
