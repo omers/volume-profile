@@ -33,11 +33,11 @@ uv run python swing_frvp.py SPY --start 2026-03-30
 uv run python .claude/skills/trader/scripts/hold_sweep.py SPY
 ```
 
-From `swing_frvp.py` take: `State`, `Profile shape`, VAH/POC/VAL, HVNs/LVNs with distances, `Latest signal` with entry/T1/T2/stop/hard stop and `Status (to today)`, `Live (last bar)`, and the `History` line.
+From `swing_frvp.py` take: `State`, `Profile shape`, VAH/POC/VAL, HVNs/LVNs with distances, `Latest signal` with entry/T1/T2/stop/hard stop and `Status (to today)`, `History`, `Bars to T1`, `Time stop`, `Live (last bar)`, `Filtered (last bar)` and `Armed next bar`. The Pine indicator's table shows the same rows, so they can be matched against a screenshot.
 
 From `hold_sweep.py` take, per anchor: the T1 hit rate by window, the median bars to T1, the "80% of T1 hits arrive within N bars" figure, and the sample size. It also sweeps ~3- and ~9-month anchors, matching HOWTO's advice to confirm with a second anchor. Where anchors disagree, say so; don't average them away.
 
-Also take its last-bar lines, which are what "what would trigger next" must be built on:
+Its last-bar lines (the same data as the model's `Filtered (last bar)` and `Armed next bar` rows, with T2 and the failing levels too) are what "what would trigger next" must be built on:
 
 - `FILTERED on last bar` — a setup that matched the rules on the last bar but was dropped (R:R below the minimum, or cooldown). Report it, with the reason. It has already been used up: don't present a touch of that level as a pending trigger.
 - `armed next bar` — pullback levels (rules 7/8) that can fire on the next bar's first touch, nearest first, with approximate T1/T2/stop and whether R:R passes. A level that isn't listed can't fire a pullback signal next bar, because the rule needs the previous bar fully beyond it. A level marked FAILS wouldn't show a signal either.
@@ -52,10 +52,10 @@ Then describe: where price sits relative to value (above VAH / inside / below VA
 
 ### 4. Pick the holding window ("which bars")
 
-The holding window is how long a trade is given to reach T1 before the time stop. Base it on the sweep, not on HOWTO's default 3-5 days:
+The holding window is how long a trade is given to reach T1 before the time stop. Base it on the sweep (or the model's `Time stop` row, which uses the same 80% figure):
 
 - Use the "80% of T1 hits arrive within N bars" figure from the anchor the signal came from (normally 2026-03-30) as the time stop.
-- If the T1 rate keeps rising well past 5 bars (e.g. 10% at 5 bars, 56% at 15), say plainly that HOWTO's 3-5 day time stop would have cut most of the winners.
+- If the T1 rate keeps rising well past 5 bars (e.g. 10% at 5 bars, 56% at 15), say plainly that a one-week (weekly option) time stop would have cut most of the winners.
 - With fewer than ~20 signals, call the numbers rough and give the range, not one precise number.
 
 ### 5. Pick the option ("which options")
@@ -72,7 +72,7 @@ For a live or open signal:
   python3 .claude/skills/trader/scripts/trading_days.py expiries --from <today> --weeks 10
   ```
 
-  and pick an expiry with at least ~1.5x the holding window in trading days, and never fewer than HOWTO's 2-4 weeks. Give two candidates (usually a weekly and the next monthly) with their trading-day counts. For an already-open signal, count from today, not from the original entry.
+  and pick an expiry with at least ~1.5x the holding window in trading days, and never under 2 weeks, as HOWTO says. Give two candidates (usually a weekly and the next monthly) with their trading-day counts. For an already-open signal, count from today, not from the original entry.
 - **Strike**: at the money to slightly in the money (delta ~0.5-0.7), or a debit spread with the long strike near the current price and the short strike near **T1**. Express strikes relative to price and T1 (e.g. "long ~755, short ~751 put spread") - you don't have an options chain, so don't quote premiums or exact deltas.
 - **Exits, in underlying prices**: T1 (take profit), T2 (runner, only if time remains), stop on a **daily close** beyond `Stop`, immediate exit at `Hard stop`, and the time stop date from step 4.
 - **Skip checks** (HOWTO "When to skip a trade"): T1 less than ~1% from entry; price sitting at the POC; FOMC, CPI or major earnings before expiry; very high implied volatility. You can't see the economic calendar or IV, so name the likely events in the window if you know them and tell the user to confirm the dates.

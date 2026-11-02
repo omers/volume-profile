@@ -4,7 +4,7 @@ How to use the **Swing Fixed Range Volume Profile** Pine Script ([swing_frvp.pin
 
 To install it: in TradingView open the **Pine Editor**, replace its contents with `swing_frvp.pine`, click **Save**, then **Add to chart** and click the bar where the profile should start. Keep only one copy of the indicator on the chart; an older copy keeps running the old code.
 
-Defaults are set for this plan: start 30 Mar 2026, min reward:risk 1.5, max 5 bars per trade for stats, a 3-bar cooldown against opposite signals, table at the bottom left. Stops, targets and the pullback signal follow the book *Volume Profile: The Insider's Guide to Trading* (page numbers below refer to it).
+Defaults are set for this plan: start 30 Mar 2026, min reward:risk 1.5, 15 bars per trade for the History stats, each signal followed for up to 40 bars for the `Bars to T1` row, a 3-bar cooldown against opposite signals, table at the bottom left. Stops, targets and the pullback signal follow the book *Volume Profile: The Insider's Guide to Trading* (page numbers below refer to it).
 
 > This is general education, not personal financial advice. Options can lose 100% of the premium paid.
 
@@ -23,6 +23,10 @@ Defaults are set for this plan: start 30 Mar 2026, min reward:risk 1.5, max 5 ba
 | Dotted red line, `Hard stop` | 1.5× the normal stop distance | Exit **immediately** if price touches it, even mid-day |
 | Table, `State` row | Where price is relative to the Value Area | Sets the bias (see below) |
 | Table, `Profile shape` row | The histogram's shape: D, P, b or thin | Sets which signals to expect (see below) |
+| Table, `Bars to T1` row | How many bars past signals took to reach T1: the median, and the bar by which 80% of the T1 hits had arrived | How long a trade needs. The 80% figure is the time stop |
+| Table, `Time stop` row | The 80% figure applied to the latest signal: which bar it's on and how many are left | Exit if T1 isn't reached by then |
+| Table, `Filtered (last bar)` row | A setup that matched the rules on the last bar but was dropped (R:R below the minimum, or cooldown) | No trade. The setup is used up: touching the same level next bar does not fire it again |
+| Table, `Armed next bar` row | Pullback levels (signals 7–8) the next bar can fire on at the first touch, nearest first, with T1 and R:R | The only levels a pullback signal can come from next bar. A level that isn't listed can't fire one, because the rule needs the previous candle fully beyond it |
 
 ### Bias from the `State` row
 
@@ -84,7 +88,7 @@ To go back to the old behavior, set `Stop placement` to "Signal bar" and `Stop r
 3. Check the `State` and `Profile shape` rows agree with the signal (see the bias and shape tables). A BUY while "Below value", or a SELL while "Above value", goes against the trend: skip it or size down.
 4. Read the plan from the table: `Entry`, `Target 1`, `Target 2`, `Stop` (with its hard stop), `R:R to T1`. The same levels are drawn as the green and red zones.
 5. Check T1 is at least ~1% from the entry (see "When to skip a trade").
-6. Place the trade and write down the exits as **SPY prices**: T1, Stop, and the time stop.
+6. Place the trade and write down the exits as **SPY prices**: T1, Stop, and the time stop from the `Time stop` row.
 7. Follow it with the `Status (to today)` row: "T1 hit after N bars", "Stopped after N bars", or "Open".
 
 ## The main problem: time
@@ -93,14 +97,16 @@ An option only pays if SPY reaches the target **before expiration**, and weekly 
 
 A weekly option gives you **about 5 trading days**. Many signals that eventually reach their target take longer than that, and the option can expire worthless in the meantime.
 
+On SPY anchored 30 Mar 2026 (10 signals), only 1 in 10 reached T1 within 5 bars, but 6 in 10 did within 15. The winners took a median of 12 bars, and 80% of them arrived within 13. Losing trades were stopped within 3–5 bars. These numbers come from a small, optimistic sample, but the pattern is clear: a trade that survives its first week usually needs 2–3 weeks to pay.
+
 So first test whether the signals work on a weekly timescale.
 
 ## 1. Check it with the script first
 
 1. Use a **daily** SPY chart, anchored over the last **2–3 months**, with a second copy anchored over 6–12 months for confirmation.
-2. **"Max bars per trade (for stats)" is 5** by default, so the History row shows how often T1 was hit **within one week**.
+2. **"Max bars per trade (for stats)" is 15** by default, so the History row shows how often T1 was hit **within three weeks**. The `Bars to T1` row shows how long the winners actually took.
 3. **"Min reward:risk to Target 1" is 1.5** by default: closer to the book's 1:1 for a higher hit rate, with some room for option costs.
-4. Compare the result with a longer window, e.g. 30 bars. If T1 is hit often within 30 bars but rarely within 5, the signals are too slow for weekly options.
+4. Set it to 5 to compare with one week. If T1 is hit often within 15 bars but rarely within 5, the signals are too slow for weekly options; use the longer expiries below.
 5. Also try a **4H chart**. Its signals and targets are shorter-term, so they're more likely to resolve within a week.
 
 The history stats are optimistic, because the profile levels are built from the whole range, including bars that came after each signal. Look for a clear margin, not a borderline result.
@@ -109,13 +115,13 @@ The history stats are optimistic, because the profile levels are built from the 
 
 | Item | Suggestion | Why |
 |---|---|---|
-| **Expiration** | **2–4 weeks**, even if you plan to exit within a week | Less time decay, and more room if the move is slow. Very short expiries (0–5 days) are close to gambling on timing |
+| **Expiration** | At least **1.5× the time stop** in trading days, and never under 2 weeks. With a 13-bar time stop that's about 20+ trading days (4–5 weeks). Count from the day you enter | The trade needs the whole time stop, and time decay speeds up in the last weeks. Very short expiries (0–5 days) are close to gambling on timing |
 | **Strike** | At the money or slightly in the money (delta ~0.5–0.7) | Moves closer to one-for-one with SPY, so reaching T1 actually pays |
 | **Structure** | Consider a **debit spread**: buy a call near the current price and sell one near **T1** (puts for SELL signals) | Cheaper, less time decay, and the script's T1 is a natural place for the short strike |
 | **Entry** | Enter after the signal candle closes | The signal is only valid at the close |
 | **Exit on target** | Take profit when SPY reaches **T1**. Hold part of the position for T2 only if there's enough time left | Options decay, so don't wait for perfect |
 | **Exit on stop** | Exit when a **SPY daily candle closes** beyond the script's stop, or SPY touches the hard stop. Don't use the option's price | Option prices are noisy, and SPY's price is the actual signal |
-| **Time stop** | If SPY hasn't reached T1 within **3–5 trading days**, exit | Time decay speeds up near expiration |
+| **Time stop** | Exit if SPY hasn't reached T1 by the bar in the `Time stop` row (80% of past T1 hits arrived by then; 13 bars on SPY now) | Past that point most winners would already have paid, and time decay keeps growing |
 | **Size** | Risk only **1–2% of your account** per trade, measured by the premium you pay | Full premium can be lost |
 
 ## 3. When to skip a trade
@@ -127,7 +133,7 @@ The history stats are optimistic, because the profile levels are built from the 
 
 ## 4. A realistic approach
 
-1. Run the script on SPY for a few weeks and write down each signal. Track whether **SPY reached T1 within 5 days**, and what the option you would have chosen would have done.
+1. Run the script on SPY for a few weeks and write down each signal. Track whether **SPY reached T1 within the time stop**, and what the option you would have chosen would have done.
 2. If the numbers hold up, start with **small debit spreads**.
 3. Increase size only after 20–30 real trades.
 
@@ -139,6 +145,6 @@ The history stats are optimistic, because the profile levels are built from the 
 - [ ] `Profile shape` agrees with the signal's direction (or is D)
 - [ ] T1 is at least ~1% from entry
 - [ ] No FOMC / CPI / major event before expiration
-- [ ] Expiration 2–4 weeks out; strike delta ~0.5–0.7, or a debit spread with the short strike near T1
+- [ ] Expiration at least 1.5× the time stop in trading days (never under 2 weeks); strike delta ~0.5–0.7, or a debit spread with the short strike near T1
 - [ ] Premium at risk is 1–2% of the account or less
-- [ ] Exits written down: T1 (SPY price), stop on daily close (SPY price), hard stop (SPY price), time stop (3–5 trading days)
+- [ ] Exits written down: T1 (SPY price), stop on daily close (SPY price), hard stop (SPY price), time stop (the `Time stop` row)

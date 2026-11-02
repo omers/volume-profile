@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import statistics
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
@@ -46,7 +47,8 @@ class Config:
     stop_rule: str = RULE_CLOSE
     hard_mult: float = 1.5
     min_rr: float = 1.5
-    max_hold: int = 5
+    max_hold: int = 15
+    t1_horizon: int = 40    # bars each signal is followed for the bars-to-T1 stats
 
     mintick: float = 0.01
 
@@ -134,8 +136,12 @@ class Result:
     live_t2: float = math.nan
     live_stop: float = math.nan
     live_rr: float = math.nan
+    live_raw: int = 0                                      # setup on the last bar before the filters
+    live_chop: bool = False
     cross_up_vah: bool = False
     cross_dn_val: bool = False
+    t1_bars: List[int] = field(default_factory=list)       # bars to T1 of each signal that hit it within t1_horizon
+    armed: List[Tuple[float, float, float, float, float]] = field(default_factory=list)  # (level, T1, T2, stop, R:R)
     last: Optional[Bar] = None
     bars: List[Bar] = field(default_factory=list)          # the range bars; Signal.index points here
 
@@ -402,6 +408,10 @@ class SwingFRVP:
             if cfg.min_rr != 0 and rr < cfg.min_rr:
                 continue
 
+            k1 = self.bars_to_t1(rb, i, d, t1, sl, hard)
+            if k1 is not None:
+                res.t1_bars.append(k1)
+
             hit1 = hit2 = stopped = False
             window_done = i + cfg.max_hold <= n - 1
             for j in range(i + 1, min(n - 1, i + cfg.max_hold) + 1):
@@ -434,6 +444,16 @@ class SwingFRVP:
         res.signals = found[::-1]
         self.live(bars, atr, res)
         return res
+
+    # Bars from the signal until T1, within t1_horizon (None when stopped first or never reached)
+    def bars_to_t1(self, rb: List[Bar], i: int, d: int, t1: float, sl: float, hard: float) -> Optional[int]:
+        for j in range(i + 1, min(len(rb) - 1, i + self.cfg.t1_horizon) + 1):
+            b = rb[j]
+            if self.stop_hit(b, sl, hard, d):
+                return None
+            if (b.high >= t1) if d == 1 else (b.low <= t1):
+                return j - i
+        return None
 
     # Follow the latest trade all the way to today, not just max_hold bars
     def follow(self, rb: List[Bar], s: Signal) -> str:
@@ -471,11 +491,23 @@ class SwingFRVP:
         rr = abs(t1 - e) / max(abs(e - sl), cfg.mintick)
         chop = raw != 0 and self.choppy(bars, i, raw, first=0)
         res.live_dir = raw if raw != 0 and not chop and (cfg.min_rr == 0 or rr >= cfg.min_rr) else 0
+        res.live_raw, res.live_chop = raw, chop
         res.live_why, res.live_entry, res.live_t1, res.live_t2, res.live_stop, res.live_rr = why, e, t1, t2, sl, rr
         if i >= 1:
             pc = bars[i - 1].close
             res.cross_up_vah = b.close > p.vah and pc <= p.vah
             res.cross_dn_val = b.close < p.val and pc >= p.val
+
+        # Pullback levels the next bar can fire on: the rule needs this bar fully beyond the level.
+        # The stop assumes the next bar's extreme stays at the level, so a deeper wick can move it.
+        res.armed = []
+        d = p.shape_bias
+        if cfg.use_pull and d != 0:
+            for x in sorted(self.pull_lv, reverse=(d == 1)):
+                if (b.close > x and b.low > x) if d == 1 else (b.close < x and b.high < x):
+                    t1, t2 = self.targets_for(x, d, atr[i])
+                    sl = self.stop_for(x, x, x, d, atr[i])
+                    res.armed.append((x, t1, t2, sl, abs(t1 - x) / max(abs(x - sl), cfg.mintick)))
 
 
 # ───── Data
@@ -502,6 +534,14 @@ def load_yf(ticker: str, start: datetime, interval: str = "1d", warmup_days: int
     for ts, r in df.iterrows():
         bars.append(Bar(ts.to_pydatetime().replace(tzinfo=None), float(r["Open"]), float(r["High"]), float(r["Low"]), float(r["Close"]), float(r["Volume"])))
     return bars
+
+
+# Bars by which a share `q` of the T1 hits had arrived (nearest rank)
+def t1_within(bars: List[int], q: float) -> Optional[int]:
+    if not bars:
+        return None
+    b = sorted(bars)
+    return b[max(0, math.ceil(q * len(b)) - 1)]
 
 
 # ───── Report (the script's status table, plus the signal list)
@@ -550,13 +590,39 @@ def report(res: Result, cfg: Config, show_signals: int = 40) -> str:
         hist = (f"Within {cfg.max_hold} bars: T1 {st.t1}{nt} ({st.t1 * 100 / st.signals:.0f}%), "
                 f"T2 {st.t2}{nt} ({st.t2 * 100 / st.signals:.0f}%), stopped {st.stopped}{nt}, expired {st.expired}{nt}"
                 + (f", still open {st.open}" if st.open else ""))
-    rows += [("History", hist), ("VAH", pct(p.vah)), ("POC", pct(p.poc) + "  " + vol_text(p.tot[p.poc_idx])), ("VAL", pct(p.val))]
+    rows.append(("History", hist))
+    k80 = t1_within(res.t1_bars, 0.8)
+    if k80 is None:
+        rows.append(("Bars to T1", f"no signal reached T1 within {cfg.t1_horizon} bars"))
+    else:
+        rows.append(("Bars to T1", f"median {statistics.median(res.t1_bars):g}, 80% within {k80} "
+                                   f"({len(res.t1_bars)} of {len(res.signals)} signals hit T1 within {cfg.t1_horizon} bars)"))
+    ts = "-"
+    if s is not None and k80 is not None:
+        left = k80 - s.ago
+        ts = f"{k80} bars after entry: " + (f"bar {s.ago}, {left} left" if left > 0 else "today" if left == 0 else f"passed {-left} bars ago")
+    rows.append(("Time stop", ts))
+    rows += [("VAH", pct(p.vah)), ("POC", pct(p.poc) + "  " + vol_text(p.tot[p.poc_idx])), ("VAL", pct(p.val))]
     for x, v in sorted(p.top_hvn(cfg.max_nodes), reverse=True):
         rows.append(("HVN", pct(x) + "  " + vol_text(v)))
     for x, v in sorted(p.top_lvn(cfg.max_nodes), reverse=True):
         rows.append(("LVN", pct(x) + "  " + vol_text(v)))
     live = {1: "BUY", -1: "SELL"}.get(res.live_dir, "none")
     rows.append(("Live (last bar)", live + (f": {res.live_why}" if res.live_dir else "")))
+    filt = "none"
+    if res.live_raw and not res.live_dir:
+        reason = f"cooldown ({cfg.cooldown} bars)" if res.live_chop else f"R:R {res.live_rr:.2f} < {cfg.min_rr:g}"
+        filt = f"{'BUY' if res.live_raw == 1 else 'SELL'} {res.live_why} at {px(res.live_entry)}: {reason}"
+    rows.append(("Filtered (last bar)", filt))
+    if not res.armed:
+        rows.append(("Armed next bar", "none"))
+    else:
+        ok = [a for a in res.armed if not cfg.min_rr or a[4] >= cfg.min_rr]
+        side = "BUY" if p.shape_bias == 1 else "SELL"
+        txt = (f"{side} on a touch of " + ", ".join(f"{px(x)} (T1 {px(t1)}, stop {px(sl)}, R:R {rr:.1f})" for x, t1, _, sl, rr in ok)
+               if ok else "none passes R:R")
+        skipped = len(res.armed) - len(ok)
+        rows.append(("Armed next bar", txt + (f"; {skipped} more below min R:R" if skipped else "")))
     alerts = [a for a, on in (("Breakout above VAH", res.cross_up_vah), ("Breakdown below VAL", res.cross_dn_val)) if on]
     if alerts:
         rows.append(("Alerts", ", ".join(alerts)))
@@ -716,7 +782,8 @@ def main() -> None:
     ap.add_argument("--csv", help="read bars from a CSV instead of Yahoo")
     ap.add_argument("--interval", default="1d", help="Yahoo bar interval, e.g. 1d, 1h")
     ap.add_argument("--rows", type=int, default=120)
-    ap.add_argument("--max-hold", type=int, default=5)
+    ap.add_argument("--max-hold", type=int, default=15, help="bars per trade for the History stats")
+    ap.add_argument("--t1-horizon", type=int, default=40, help="bars each signal is followed for the bars-to-T1 stats")
     ap.add_argument("--min-rr", type=float, default=1.5)
     ap.add_argument("--cooldown", type=int, default=3)
     ap.add_argument("--stop-mode", choices=[STOP_VOL, STOP_BAR], default=STOP_VOL)
@@ -729,7 +796,7 @@ def main() -> None:
 
     cfg = Config(
         start=datetime.fromisoformat(a.start), end=datetime.fromisoformat(a.end) if a.end else None,
-        rows=a.rows, max_hold=a.max_hold, min_rr=a.min_rr, cooldown=a.cooldown,
+        rows=a.rows, max_hold=a.max_hold, t1_horizon=a.t1_horizon, min_rr=a.min_rr, cooldown=a.cooldown,
         stop_mode=a.stop_mode, stop_rule=a.stop_rule, use_pull=not a.no_pullback,
     )
     bars = load_csv(a.csv) if a.csv else load_yf(a.ticker, cfg.start, a.interval)
