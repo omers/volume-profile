@@ -17,7 +17,7 @@ import csv
 import sys
 from datetime import date
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 FIELDS = ["open_date", "symbol", "amount", "buy_price", "real", "sell_date", "close_price"]
 DEFAULT_FILE = Path(__file__).resolve().parents[4] / "trades.csv"   # repo root

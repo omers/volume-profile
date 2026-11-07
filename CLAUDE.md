@@ -31,7 +31,7 @@ uv run python swing_frvp.py SPY --csv spy.csv --max-hold 15 # CSV: date/datetime
 uv run python swing_frvp.py --help
 ```
 
-The console script `swing-frvp` is also defined in `pyproject.toml`. There are no tests, linter or CI; verify changes by running the script on SPY and comparing its report against the Pine indicator on TradingView.
+The console script `swing-frvp` is also defined in `pyproject.toml`. CI (`.github/workflows/ci.yml`) runs ruff (syntax/undefined names), a network-free smoke run on synthetic bars (`tests/make_bars.py`) on Python 3.9 and 3.13, and imports the trader skill scripts. There are no unit tests; verify rule changes by running the script on SPY and comparing its report against the Pine indicator on TradingView.
 
 ## Architecture
 
