@@ -43,3 +43,5 @@ The console script `swing-frvp` is also defined in `pyproject.toml`. There are n
 - Stop rule `close` (default) exits on a daily close beyond the stop or a touch of the hard stop; `touch` is the old behavior.
 - Timing: each signal is also followed for `t1_horizon` bars (`bars_to_t1`) into `Result.t1_bars`. The `Bars to T1` row shows the median and the 80% figure (`t1_within`), and the `Time stop` row applies that figure to the latest signal.
 - `live()` also records a setup the filters dropped on the last bar (`live_raw`, `live_chop` → `Filtered (last bar)`) and the pullback levels the next bar can fire on (`Result.armed` → `Armed next bar`). Rules 7/8 need the previous bar fully beyond the level, so a level the last bar wicked into is not armed.
+
+## Rules
