@@ -44,7 +44,8 @@ minStopAtr = input.float(0.5, "Min stop distance (x ATR)", minval = 0, step = 0.
 stopRule   = input.string(RULE_CLOSE, "Stop rule", options = [RULE_CLOSE, RULE_TOUCH], group = G_TRADE)
 hardMult   = input.float(1.5, "Hard stop (x normal stop distance)", minval = 1, step = 0.1, group = G_TRADE)
 minRR      = input.float(1.5, "Min reward:risk to Target 1 (0 = off)", minval = 0, step = 0.1, group = G_TRADE)
-maxHold    = input.int(5, "Max bars per trade (for stats)", minval = 1, maxval = 200, group = G_TRADE)
+maxHold    = input.int(15, "Max bars per trade (for stats)", minval = 1, maxval = 200, group = G_TRADE)
+t1Horizon  = input.int(40, "Bars to T1: follow each signal for (bars)", minval = 1, maxval = 500, group = G_TRADE)
 showPlan   = input.bool(true, "Draw trade plan for the latest signal", group = G_TRADE)
 
 upCol     = input.color(color.new(color.teal, 35), "Up volume", group = G_STYLE)
@@ -158,7 +159,7 @@ var array<label> labels = array.new<label>()
 var array<float> lvls   = array.new<float>()
 var array<float> pullLv = array.new<float>()
 tblPos = tablePos == "Top right" ? position.top_right : tablePos == "Bottom right" ? position.bottom_right : tablePos == "Bottom left" ? position.bottom_left : position.top_left
-var table tbl = table.new(tblPos, 2, 15, bgcolor = color.new(color.black, 20), border_width = 1)
+var table tbl = table.new(tblPos, 2, 19, bgcolor = color.new(color.black, 20), border_width = 1)
 txtSize = compact ? size.tiny : size.small
 
 var float poc = na
@@ -191,6 +192,7 @@ var int    stT2     = 0
 var int    stStop   = 0
 var int    stExp    = 0
 var int    stOpen   = 0
+var array<float> t1Bars = array.new<float>()   // bars to T1 of each signal that hit it within t1Horizon
 
 drawLevel(float price, color c, string name, int w, string st, string suffix, int labX, string labStyle) =>
     lines.push(line.new(firstBar, price, bar_index, price, extend = extend.right, color = c, width = w, style = st))
@@ -300,6 +302,7 @@ if barstate.islast and aHigh.size() > 0
     stStop  := 0
     stExp   := 0
     stOpen  := 0
+    t1Bars.clear()
 
     float pMin = aLow.min()
     float pMax = aHigh.max()
@@ -470,6 +473,15 @@ if barstate.islast and aHigh.size() > 0
                         float hard = ent + (sl - ent) * hardMult
                         float rr   = math.abs(t1 - ent) / math.max(math.abs(ent - sl), syminfo.mintick)
                         if minRR == 0 or rr >= minRR
+                            // Bars to T1 within t1Horizon (not counted when the stop comes first)
+                            if i < n - 1
+                                for j = i + 1 to math.min(n - 1, i + t1Horizon)
+                                    if stopHit(aHigh.get(j), aLow.get(j), aClose.get(j), sl, hard, d)
+                                        break
+                                    if d == 1 ? aHigh.get(j) >= t1 : aLow.get(j) <= t1
+                                        t1Bars.push(j - i)
+                                        break
+
                             bool hit1    = false
                             bool hit2    = false
                             bool stopped = false
@@ -580,6 +592,42 @@ if barstate.islast and showTable
     string hist  = stSig == 0 ? "No completed signals yet" : "Within " + str.tostring(maxHold) + " bars: T1 " + str.tostring(stT1) + nTx + " (" + str.tostring(stT1 * 100.0 / stSig, "#") + "%), T2 " + str.tostring(stT2) + nTx + " (" + str.tostring(stT2 * 100.0 / stSig, "#") + "%), stopped " + str.tostring(stStop) + nTx + ", expired " + str.tostring(stExp) + nTx + (stOpen > 0 ? ", still open " + str.tostring(stOpen) : "")
     string stopTx = has ? pctFrom(lastSL, lastEnt) + (stopRule == RULE_CLOSE ? " on close | hard " + str.tostring(lastHard, format.mintick) : "") : "-"
 
+    // Bars to T1: median, and the bar by which 80% of the T1 hits had arrived (nearest rank) = time stop
+    int k80 = na
+    string t1Tx = "no signal reached T1 within " + str.tostring(t1Horizon) + " bars"
+    if t1Bars.size() > 0
+        array<float> srt = t1Bars.copy()
+        srt.sort()
+        k80  := int(srt.get(math.max(0, math.ceil(0.8 * srt.size()) - 1)))
+        t1Tx := "median " + str.tostring(srt.median(), "#.#") + ", 80% within " + str.tostring(k80) + " (" + str.tostring(srt.size()) + " of " + str.tostring(stSig + stOpen) + " signals hit T1 within " + str.tostring(t1Horizon) + " bars)"
+    string tsTx = "-"
+    if has and not na(k80)
+        int left = k80 - lastAgo
+        tsTx := str.tostring(k80) + " bars after entry: " + (left > 0 ? "bar " + str.tostring(lastAgo) + ", " + str.tostring(left) + " left" : left == 0 ? "today" : "passed " + str.tostring(-left) + " bars ago")
+
+    // A setup on this bar that the filters dropped; it does not fire again on the next bar
+    string filtTx = liveRaw != 0 and liveDir == 0 ? (liveRaw == 1 ? "BUY " : "SELL ") + liveWhy + " at " + str.tostring(liveE, format.mintick) + ": " + (liveChop ? "cooldown (" + str.tostring(cooldown) + " bars)" : "R:R " + str.tostring(liveRR, "#.##") + " < " + str.tostring(minRR)) : "none"
+
+    // Pullback levels the next bar can fire on: the rule needs this bar fully beyond the level.
+    // The stop assumes the next bar's extreme stays at the level, so a deeper wick can move it.
+    string armTx = "none"
+    if usePull and shapeBias != 0 and pullLv.size() > 0
+        array<float> cand = pullLv.copy()
+        cand.sort(shapeBias == 1 ? order.descending : order.ascending)
+        string okTx = ""
+        int skipped = 0
+        for x in cand
+            if shapeBias == 1 ? close > x and low > x : close < x and high < x
+                [at1, at2] = targetsFor(lvls, x, shapeBias, atrNow)
+                float asl = stopFor(x, x, x, shapeBias, atrNow)
+                float arr = math.abs(at1 - x) / math.max(math.abs(x - asl), syminfo.mintick)
+                if minRR == 0 or arr >= minRR
+                    okTx += (okTx == "" ? "" : ", ") + str.tostring(x, format.mintick) + " (T1 " + str.tostring(at1, format.mintick) + ", stop " + str.tostring(asl, format.mintick) + ", R:R " + str.tostring(arr, "#.#") + ")"
+                else
+                    skipped += 1
+        if okTx != "" or skipped > 0
+            armTx := (okTx != "" ? (shapeBias == 1 ? "BUY" : "SELL") + " on a touch of " + okTx : "none passes R:R") + (skipped > 0 ? "; " + str.tostring(skipped) + " more below min R:R" : "")
+
     // Compact mode keeps only the trade plan rows
     int rw = 0
     if not compact
@@ -606,6 +654,15 @@ if barstate.islast and showTable
     if not compact
         putRow(rw, "History", hist, color(na))
         rw += 1
+        putRow(rw, "Bars to T1", t1Tx, color(na))
+        rw += 1
+    putRow(rw, "Time stop", tsTx, color(na))
+    rw += 1
+    putRow(rw, "Filtered (last bar)", filtTx, filtTx == "none" ? color(na) : color.new(color.orange, 60))
+    rw += 1
+    putRow(rw, "Armed next bar", armTx, color(na))
+    rw += 1
+    if not compact
         putRow(rw, "VAH", na(vah) ? "-" : pctTxt(vah), color(na))
         rw += 1
         putRow(rw, "POC", na(poc) ? "-" : pctTxt(poc), color(na))

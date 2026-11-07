@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install
+        run: uv sync --python ${{ matrix.python }}
+      - name: Lint
+        run: uvx ruff check --select E9,F swing_frvp.py .claude/skills/trader/scripts tests
+      - name: Smoke test (synthetic CSV, no network)
+        run: |
+          uv run python tests/make_bars.py "$RUNNER_TEMP/bars.csv"
+          uv run python swing_frvp.py TEST --csv "$RUNNER_TEMP/bars.csv" --start 2026-01-01 --save "$RUNNER_TEMP/out.png" | tee "$RUNNER_TEMP/report.txt"
+          grep -q "Bars to T1" "$RUNNER_TEMP/report.txt"
+          test -s "$RUNNER_TEMP/out.png"
+      - name: Skill scripts import
+        run: uv run python -c "import sys; sys.path.insert(0, '.'); sys.path.insert(0, '.claude/skills/trader/scripts'); import hold_sweep, journal"

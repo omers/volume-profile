@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: sell-signal-option-timing
+expected_outcome: |
+  Checks which SELL signal is actually open, measures bars-to-T1 with the sweep, converts the holding window to a date with NYSE trading days, and proposes two expiry candidates with trading-day counts and strikes relative to T1.
