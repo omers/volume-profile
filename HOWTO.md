@@ -24,7 +24,7 @@ Defaults are set for this plan: start 30 Mar 2026, min reward:risk 1.5, 15 bars 
 | **Solid blue lines**, labels `VAH` / `VAL`, with light blue shading between | Value Area High / Low: the range holding 70% of the volume | The edges of value. All signals fire at these two lines |
 | **Orange dashed lines**, label `HVN` | High-volume nodes: volume peaks | Support/resistance and the usual targets |
 | **Gray dotted lines**, label `LVN` | Low-volume nodes inside the Value Area | Thin spots price tends to move through fast |
-| Green `BUY` tag under a candle / red `SELL` tag above a candle | A signal on that candle's close | Hover over it for the reason, entry, T1, T2, stop, R:R and its result |
+| Green `BUY SSO` tag under a candle / red `SELL SDS` tag above a candle | A signal on that candle's close, with the ETF to buy (the table's `Latest signal`, `Filtered` and `Armed next bar` rows and the alerts name it too) | Hover over it for the reason, entry, T1, T2, stop, R:R and its result |
 | Green zone with `T1` (thick green) and `T2` (dashed green) lines | Reward zone of the latest signal | Where to take profit. Drawn slightly in front of the level, since price often turns just before it |
 | Red zone with `Stop (on close)` (thick red) line | Risk zone of the latest signal | Exit if a **daily candle closes** beyond it |
 | Dotted red line, `Hard stop` | 1.5× the normal stop distance | Exit **immediately** if price touches it, even mid-day |

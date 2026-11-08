@@ -9,6 +9,10 @@ const string G_SIG   = "Signals"
 const string G_TRADE = "Targets & stops"
 const string G_STYLE = "Style"
 
+// ETF held for each signal: BUY -> SSO (2x S&P 500), SELL -> SDS (-2x S&P 500)
+const string ETF_BUY  = "SSO"
+const string ETF_SELL = "SDS"
+
 const string STOP_VOL   = "Volume zone (behind the level's volume)"
 const string STOP_BAR   = "Signal bar (low / high)"
 const string RULE_CLOSE = "Close beyond stop, plus hard stop"
@@ -542,9 +546,9 @@ if barstate.islast and aHigh.size() > 0
                                 shown += 1
                                 string tip = why + "\nEntry " + str.tostring(ent, format.mintick) + "\nT1 " + str.tostring(t1, format.mintick) + "  T2 " + str.tostring(t2, format.mintick) + "\nStop " + str.tostring(sl, format.mintick) + (stopRule == RULE_CLOSE ? " (on close), hard " + str.tostring(hard, format.mintick) : "") + "  R:R " + str.tostring(rr, "#.#") + "\nResult (first " + str.tostring(maxHold) + " bars): " + res
                                 if d == 1
-                                    labels.push(label.new(firstBar + i, aLow.get(i), "BUY", style = label.style_label_up, color = buyCol, textcolor = color.white, size = size.small, tooltip = tip))
+                                    labels.push(label.new(firstBar + i, aLow.get(i), "BUY " + ETF_BUY, style = label.style_label_up, color = buyCol, textcolor = color.white, size = size.small, tooltip = tip))
                                 else
-                                    labels.push(label.new(firstBar + i, aHigh.get(i), "SELL", style = label.style_label_down, color = sellCol, textcolor = color.white, size = size.small, tooltip = tip))
+                                    labels.push(label.new(firstBar + i, aHigh.get(i), "SELL " + ETF_SELL, style = label.style_label_down, color = sellCol, textcolor = color.white, size = size.small, tooltip = tip))
 
             // Trade plan for the latest signal: reward and risk zones plus target/stop lines
             if showPlan and lastDir != 0
@@ -585,7 +589,7 @@ if barstate.islast and showTable
     string state = na(poc) ? "No volume data on this symbol (use SPY, not SPX)" : close > vah ? "Above value: uptrend, buy pullbacks to VAH/HVN" : close < val ? "Below value: downtrend, sell rallies to VAL/HVN" : "Inside value: range, VAL to POC to VAH"
     color  stCol = na(poc) ? color.red : close > vah ? color.teal : close < val ? color.red : color.gray
     color  shCol = shapeBias == 1 ? color.teal : shapeBias == -1 ? color.red : color.gray
-    string sigTx = lastDir == 0 ? "No signal in range" : (lastDir == 1 ? "BUY" : "SELL") + " (" + str.tostring(lastAgo) + " bars ago): " + lastWhy
+    string sigTx = lastDir == 0 ? "No signal in range" : (lastDir == 1 ? "BUY " + ETF_BUY : "SELL " + ETF_SELL) + " (" + str.tostring(lastAgo) + " bars ago): " + lastWhy
     color  sigCl = lastDir == 1 ? buyCol : lastDir == -1 ? sellCol : color.gray
     bool   has   = lastDir != 0
     string nTx   = "/" + str.tostring(stSig)
@@ -606,7 +610,7 @@ if barstate.islast and showTable
         tsTx := str.tostring(k80) + " bars after entry: " + (left > 0 ? "bar " + str.tostring(lastAgo) + ", " + str.tostring(left) + " left" : left == 0 ? "today" : "passed " + str.tostring(-left) + " bars ago")
 
     // A setup on this bar that the filters dropped; it does not fire again on the next bar
-    string filtTx = liveRaw != 0 and liveDir == 0 ? (liveRaw == 1 ? "BUY " : "SELL ") + liveWhy + " at " + str.tostring(liveE, format.mintick) + ": " + (liveChop ? "cooldown (" + str.tostring(cooldown) + " bars)" : "R:R " + str.tostring(liveRR, "#.##") + " < " + str.tostring(minRR)) : "none"
+    string filtTx = liveRaw != 0 and liveDir == 0 ? (liveRaw == 1 ? "BUY " + ETF_BUY + " " : "SELL " + ETF_SELL + " ") + liveWhy + " at " + str.tostring(liveE, format.mintick) + ": " + (liveChop ? "cooldown (" + str.tostring(cooldown) + " bars)" : "R:R " + str.tostring(liveRR, "#.##") + " < " + str.tostring(minRR)) : "none"
 
     // Pullback levels the next bar can fire on: the rule needs this bar fully beyond the level.
     // The stop assumes the next bar's extreme stays at the level, so a deeper wick can move it.
@@ -626,7 +630,7 @@ if barstate.islast and showTable
                 else
                     skipped += 1
         if okTx != "" or skipped > 0
-            armTx := (okTx != "" ? (shapeBias == 1 ? "BUY" : "SELL") + " on a touch of " + okTx : "none passes R:R") + (skipped > 0 ? "; " + str.tostring(skipped) + " more below min R:R" : "")
+            armTx := (okTx != "" ? (shapeBias == 1 ? "BUY " + ETF_BUY : "SELL " + ETF_SELL) + " on a touch of " + okTx : "none passes R:R") + (skipped > 0 ? "; " + str.tostring(skipped) + " more below min R:R" : "")
 
     // Compact mode keeps only the trade plan rows
     int rw = 0
@@ -670,7 +674,7 @@ if barstate.islast and showTable
         putRow(rw, "VAL", na(val) ? "-" : pctTxt(val), color(na))
 
 // ───── Alerts (Create Alert → condition: Swing FRVP → "Once per bar close")
-alertcondition(liveDir == 1,  "BUY signal",  "{{ticker}}: BUY signal from volume profile")
-alertcondition(liveDir == -1, "SELL signal", "{{ticker}}: SELL signal from volume profile")
+alertcondition(liveDir == 1,  "BUY signal",  "{{ticker}}: BUY signal from volume profile: buy " + ETF_BUY)
+alertcondition(liveDir == -1, "SELL signal", "{{ticker}}: SELL signal from volume profile: buy " + ETF_SELL)
 alertcondition(ta.crossover(close, vah),  "Breakout above VAH",  "{{ticker}} closed above VAH: value moving up")
 alertcondition(ta.crossunder(close, val), "Breakdown below VAL", "{{ticker}} closed below VAL: value moving down")
