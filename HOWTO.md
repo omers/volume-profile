@@ -122,6 +122,7 @@ The history stats are optimistic, because the profile levels are built from the 
 |---|---|---|
 | **Instrument** | BUY signal: buy **SSO**. SELL signal: buy **SDS**. Shares only | Both are long positions, so there is no short-selling or margin, and no expiry to manage |
 | **Entry** | Enter after the signal candle closes (signals 7–8: at the level on the first touch) | The signal is only valid at the close |
+| **Late entry** | If you couldn't buy at the signal close, buy at the **next open**, whatever the gap, unless the open is already beyond the stop or at/beyond T1 (see "If you missed the close") | Since 30 Mar 2026, entering at the next open gave up little, while skipping gaps dropped more winners than losers |
 | **Exit on target** | Take profit when SPY reaches **T1**. Hold part of the position for T2 only if there's enough time left | The ETF's drag grows while you wait, so don't wait for perfect |
 | **Exit on stop** | Exit when a **SPY daily candle closes** beyond the script's stop, or SPY touches the hard stop. Decide on SPY's price, not the ETF's | SPY's price is the actual signal, and the ETF's price is noisy |
 | **Time stop** | Exit if SPY hasn't reached T1 by the bar in the `Time stop` row (80% of past T1 hits arrived by then; 13 bars on SPY now) | Past that point most winners would already have paid, and the drag keeps growing |
@@ -135,12 +136,29 @@ The history stats are optimistic, because the profile levels are built from the 
 - **After a big move:** these ETFs can have wide spreads at the open after a large gap. Use limit orders.
 - **SDS and SSO are not the same size:** their prices differ, so compute the share count from the ETF's price, not from SPY's.
 
+### If you missed the close
+
+Value Area signals (1–6) exist only once the daily candle closes, which is late evening outside the US. When you can't buy at the close (market-on-close order or after-hours limit order), apply this rule mechanically at the next session's open:
+
+| SPY at the next open | Action |
+|---|---|
+| Between the stop and T1 | **Buy at the open**, even if it gapped toward T1 and R:R from the open is below 1.5 |
+| Beyond the stop (below it on a BUY, above it on a SELL) | No trade: the signal has failed |
+| At or beyond T1 | No trade: the signal has already paid |
+
+- Keep the signal's own exits: T1, T2, stop and hard stop stay the SPY levels from the signal bar, and the time stop is still counted from the signal bar.
+- Don't recompute R:R from the open, and don't wait for a pullback that the model hasn't armed. The 1.5 R:R filter applies to the signal bar only.
+- **Why:** on the 12 SPY signals since 30 Mar 2026 (same exits, 13-bar time stop), entry at the signal close summed to +13.8% SPY and entry at the next open to +12.7%. Skipping whenever R:R from the open was below 1.5 summed to +10.3%: it skipped four trades, and three of them (09-22, 10-14, 11-06) reached T1. The sample is small and has look-ahead bias, so re-check it as signals accumulate.
+- The faster fix is to not miss the close: set the `BUY signal` / `SELL signal` alerts to *Once per bar close* with phone push, or check the live bar ~15 minutes before the close and use a market-on-close order if the setup is already showing.
+
 ## 3. When to skip a trade
 
 - **Major events before the time stop:** FOMC meetings, CPI reports and big earnings weeks can cause gaps that skip right past your stop, and the ETF doubles the loss.
 - **A chop pattern:** price oscillating between VAL and VAH with no progress for several bars. The daily-reset drag eats a trade that goes nowhere.
 - **SPY sitting at the POC:** the price is in balance, with no edge in either direction.
 - **T1 less than about 1% from entry:** on a 2× ETF that's about 2%, which is too little to cover slippage and spread.
+
+These checks apply to the signal itself (its entry, T1 and stop). A gap at the next open is **not** a reason to skip; follow "If you missed the close".
 
 ## 4. A realistic approach
 
@@ -152,6 +170,7 @@ The history stats are optimistic, because the profile levels are built from the 
 
 - [ ] Daily (or 4H) SPY chart, profiles anchored at 2–3 months and 6–12 months
 - [ ] Signal confirmed on a closed candle
+- [ ] Missed the close? Buy at the next open unless it's beyond the stop or at/beyond T1 (no R:R recheck)
 - [ ] R:R to T1 is at least 1.5
 - [ ] `Profile shape` agrees with the signal's direction (or is D)
 - [ ] T1 is at least ~1% from entry
