@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars and edit. The Alpaca keys go in the environment, not here:
+#   export TF_VAR_alpaca_api_key_id=...
+#   export TF_VAR_alpaca_secret_key=...
+region         = "us-east-1"
+alpaca_paper   = true  # paper account first
+dry_run        = true  # log orders only; set false to trade (paper while alpaca_paper = true)
+notify_email   = ""    # e.g. "me@example.com"
+# schedule     = "cron(45 9-15 ? * MON-FRI *)"

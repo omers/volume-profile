@@ -17,12 +17,27 @@ jobs:
       - name: Install
         run: uv sync --python ${{ matrix.python }}
       - name: Lint
-        run: uvx ruff check --select E9,F swing_frvp.py .claude/skills/trader/scripts tests
+        run: uvx ruff check --select E9,F swing_frvp.py .claude/skills/trader/scripts tests deploy
       - name: Smoke test (synthetic CSV, no network)
         run: |
           uv run python tests/make_bars.py "$RUNNER_TEMP/bars.csv"
           uv run python swing_frvp.py TEST --csv "$RUNNER_TEMP/bars.csv" --start 2026-01-01 --save "$RUNNER_TEMP/out.png" | tee "$RUNNER_TEMP/report.txt"
           grep -q "Bars to T1" "$RUNNER_TEMP/report.txt"
           test -s "$RUNNER_TEMP/out.png"
+      - name: Executor smoke test (fake broker, no network)
+        run: uv run python tests/executor_smoke.py "$RUNNER_TEMP/bars.csv"
       - name: Skill scripts import
         run: uv run python -c "import sys; sys.path.insert(0, '.'); sys.path.insert(0, '.claude/skills/trader/scripts'); import hold_sweep, journal"
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Format
+        run: terraform -chdir=deploy/terraform fmt -check
+      - name: Validate
+        run: |
+          mkdir -p deploy/build/package
+          terraform -chdir=deploy/terraform init -backend=false -input=false
+          terraform -chdir=deploy/terraform validate

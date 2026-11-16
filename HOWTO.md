@@ -167,6 +167,23 @@ These checks apply to the signal itself (its entry, T1 and stop). A gap at the n
 2. If the numbers hold up, trade it all in (see **Size**), one position at a time.
 3. Re-check the results after 20–30 real trades.
 
+## 5. Automated trading (Alpaca on AWS Lambda)
+
+[deploy/executor.py](deploy/executor.py) trades these rules on an Alpaca account. It runs as an AWS Lambda function, deployed with the Terraform in [deploy/terraform](deploy/terraform). It runs every hour from 9:45 to 15:45 New York time on weekdays. Each run follows the model on the SPY chart and does the following:
+
+| When | What it does |
+|---|---|
+| Every run, holding a position | Exits on SPY's price: **hard stop** touched → sell all. **T1** touched → sell half (`T1_FRACTION`) and keep the rest for T2. **T2** touched → sell the rest. A GTC stop order on the ETF, translated from the SPY hard stop (2× SPY's % move), protects the position between runs |
+| The run just before the close (within 20 minutes) | **Stop on close**: SPY beyond the stop → sell all. **Time stop**: T1 not reached by the `Time stop` bar → sell all. **Value Area signals 1–6** showing on the day's bar → enter |
+| Every run | **Pullback signals 7–8**: the day's bar touched an armed level → enter. **Late entry**: the latest closed-bar signal wasn't entered and is still open → buy if SPY is between its stop and T1 (see "If you missed the close"). A daily close beyond the stop that the pre-close run missed → sell at the next run |
+
+- **Entries** are all in (`ALLOCATION` of the cash, 98% by default) in SSO for a BUY or SDS for a SELL, at market. The executor skips a signal whose T1 is less than 1% from its entry. A same-direction signal is ignored while in a trade; an opposite one closes the position and flips. The other skip checks (events, chop, SPY at the POC) and the State/Profile-shape check are not automated: pause the schedule (`enabled = false`) around events you want to sit out.
+- **State**: the Alpaca account is the only record. Every order the executor sends is tagged `frvp-<signal date>-<B|S>`, and the entry order also stores the signal's SPY exits, so a signal is entered once and keeps the exits it had at entry. A position in SSO/SDS that the executor didn't open is left alone, and no new trade starts while it's held. On its first run the executor may enter the latest signal if it's still open and SPY is between its stop and T1. The executor doesn't write `trades.csv`.
+- **Setup**: `deploy/build.sh`, then put the Alpaca keys in the environment (`export TF_VAR_alpaca_api_key_id=...`, `export TF_VAR_alpaca_secret_key=...`) and run `terraform -chdir=deploy/terraform apply`. The keys reach the function as environment variables. They are also kept in the Terraform state file, so keep that file private. `dry_run` and `alpaca_paper` are true by default: watch the logs (and `notify_email`) on the paper account before turning off `dry_run`, and then before switching to live keys.
+- **Data**: the bars come from Yahoo, the same as the script. If Yahoo fails or is late, the run fails or uses Alpaca's last SPY trade for the day.
+
+**Every change to the trading logic** (signal rules, filters, targets, stops, the time stop, or the trade rules in this guide) **must also be made in `deploy/executor.py`**, so the automated trades keep following this guide.
+
 ## Pre-trade checklist
 
 - [ ] Daily (or 4H) SPY chart, profiles anchored at 2–3 months and 6–12 months

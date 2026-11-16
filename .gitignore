@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 .DS_Store
 .claude/skills/*-workspace/
+
+# deploy
+deploy/build/
+deploy/terraform/.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
