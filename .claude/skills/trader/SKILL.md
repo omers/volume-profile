@@ -1,6 +1,6 @@
 ---
 name: trader
-description: Turns this repo's volume-profile model (swing_frvp.py / swing_frvp.pine) into a concrete trade plan for a ticker, usually SPY - runs the model, reads TradingView volume-profile screenshots (VAH, VAL, POC, HVN, LVN, hard stop), measures how many bars signals take to reach their targets, and turns a BUY/SELL signal into an SSO (BUY) or SDS (SELL) trade with the ETF-translated exits, position size and time stop. Use it whenever the user asks how to trade a ticker today, what the model or indicator says, what a chart screenshot means, which ETF (SSO, SDS), size or holding period to use for a BUY/SELL signal, or how many bars/trading days until a date - even if they don't mention the script or the word "skill". Also keeps the user's trade journal (trades.csv): use it whenever they say they opened, bought, entered, closed, sold or exited a position (real or backtest/paper), or ask about their trades, open positions or P&L.
+description: Turns this repo's volume-profile model (swing_frvp.py / swing_frvp.pine) into a concrete trade plan for a ticker, usually SPY - runs the model, reads TradingView volume-profile screenshots (VAH, VAL, POC, HVN, LVN, hard stop), measures how many bars signals take to reach their targets, and turns a BUY/SELL signal into an SSO (BUY) or SDS (SELL) trade with the ETF-translated exits, position size and time stop. Use it whenever the user asks for a strategy, action plan, daily or weekly plan, how to trade a ticker today, what the model or indicator says, what a chart screenshot means, which ETF (SSO, SDS), size or holding period to use for a BUY/SELL signal, or how many bars/trading days until a date - even if they don't mention the script or the word "skill". Also keeps the user's trade journal (trades.csv): use it whenever they say they opened, bought, entered, closed, sold or exited a position (real or backtest/paper), or ask about their trades, open positions or P&L.
 ---
 
 # Trader
@@ -66,7 +66,7 @@ Only build a trade plan for a signal that is **live on the last bar** or **still
 For a live or open signal:
 
 - **Instrument**: BUY -> buy **SSO** (2x S&P 500). SELL -> buy **SDS** (-2x S&P 500). Shares only; always long the ETF, never short SSO or SDS. There is no expiry, strike or spread.
-- **Exits, in SPY prices** (decisions are made on SPY, not on the ETF's price): T1 (take profit), T2 (runner, only if time remains), stop on a **daily close** beyond `Stop`, immediate exit at `Hard stop` (tell the user to place it as a real order, since a gap past a close-based stop loses 2x the SPY gap), and the time stop date. Get the date with
+- **Exits, in SPY prices** (decisions are made on SPY, not on the ETF's price): T1 (take profit), T2 (for the shares kept after T1, only if time remains), stop on a **daily close** beyond `Stop`, immediate exit at `Hard stop` (tell the user to place it as a real order, since a gap past a close-based stop loses 2x the SPY gap), and the time stop date. Get the date with
 
   ```bash
   python3 .claude/skills/trader/scripts/trading_days.py add <holding bars> --from <entry date>
@@ -81,7 +81,45 @@ For a live or open signal:
 
 ### 6. Answer
 
-Use this structure. Keep it tight, using tables for levels and timing.
+There are two formats. Pick by what the user asked:
+
+- **Action plan (the default for "strategy", "plan", "action plan", "what do I do", "weekly plan", "today's plan")**: the short if-then format below. Do the full workflow (steps 1-5) behind it, but show only the result.
+- **Full analysis** (when the user asks why, for detail, timing stats, anchors, or the model's read): the long format after it.
+
+Don't use the word "runner" (the user found it unclear). Name the position instead: "the 39 SSO", "the remaining 39 SSO (half sold at T1)".
+
+#### Action plan format
+
+Always run `journal.py list` first and open with the active positions. Then give one if-then table where every row is a concrete SPY price or close condition, an action naming the position or the new ETF trade, and an order type. Build the rows only from:
+
+- each open position's exits: T1 (if not yet hit), T2, the stop on a close, the hard stop (as a stop order placed now), and the time stop date;
+- `armed next bar` levels that pass R:R (new BUY/SELL at the level, with T1, stop, hard stop and size at 1% risk);
+- the Value Area rules 1-6 that can fire at VAH/VAL from where price is, phrased as "if the model prints it" at the close;
+- a last row for "none of the above": keep the positions and re-run the model after each close.
+
+"Weekly" covers the bars through Friday; "today" covers the next session. Armed levels are for the next bar only, so say they change daily. Add one **Watch** line for events in the window (to confirm), and the one-line disclaimer. No timing tables, anchor sweeps or explanations unless asked.
+
+```markdown
+## SPY <weekly|daily> plan: <date range>
+*As of <last bar date> close <price>. <state in a few words, profile shape>.*
+
+### Active positions
+| Position | Entry | Last | Open P&L | Signal | Status |
+<one row per open journal row: shares + ETF (real/paper), entry price and date, last ETF close, P&L $ and %, the signal it came from, what's been hit and what's left>
+<or: "None.">
+
+### If-then
+| If SPY… | Then | Order |
+<rows as above>
+
+**Watch:** <events in the window, to confirm>
+
+_Model output for research, not personal financial advice._
+```
+
+#### Full analysis format
+
+Keep it tight, using tables for levels and timing.
 
 ```markdown
 ## <TICKER>: model read as of <last bar date> close <price>
