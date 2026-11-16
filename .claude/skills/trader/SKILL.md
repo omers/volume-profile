@@ -7,7 +7,7 @@ description: Turns this repo's volume-profile model (swing_frvp.py / swing_frvp.
 
 Produce a trade plan from the repo's own model and rules, so the answer is grounded in numbers the user can reproduce rather than in an opinion about the market.
 
-The user is researching their own system. Present everything as **what the model and HOWTO.md rules produce**, with the evidence, and let them decide. Don't tell them to buy or sell, and don't size positions to their account beyond quoting HOWTO's 1-2% rule. One closing line saying it's the model's output, not personal financial advice, is enough; don't lecture.
+The user is researching their own system. Present everything as **what the model and HOWTO.md rules produce**, with the evidence, and let them decide. Don't tell them to buy or sell, and don't size positions beyond HOWTO's all-in rule. One closing line saying it's the model's output, not personal financial advice, is enough; don't lecture.
 
 ## Sources of truth
 
@@ -76,7 +76,8 @@ For a live or open signal:
 - **Late entry** (HOWTO "If you missed the close"): when the user hasn't entered a signal that fired at a previous close, apply the rule as written. Price between the stop and T1 means buy at the next open (or now, if the market is open), even after a gap toward T1. Beyond the stop means the signal failed; at or beyond T1 means it already paid. Keep the signal bar's exits and time stop. **Never recompute R:R from the open or the current price and turn it into a "skip", "wait" or "don't chase" verdict.** That untested rule kept the user out of the 2026-11-06 BUY, which hit T1 the same day, and over the 12 signals since 2026-03-30 it skipped 3 winners and 1 loser. Once T1 has been hit, there's no new entry on that signal.
 - **No rules of your own**: the verdict comes only from the model's rows and HOWTO's rules. You may mention risks (a big prior move, a gap, a thin bounce) as information, but don't let them override an entry the rules allow, and don't add "paper-trade it first" or "start smaller" hedges beyond HOWTO's sizing. If you think a new filter would help, say so separately and offer to backtest it.
 - **ETF translation**: the ETF moves about 2x SPY's percent move in the trade's direction, so show T1, T2, stop and hard stop as SPY % from entry and as approximate ETF % (2x). Add approximate ETF prices only if you have fetched the ETF's last close (yfinance `SSO` / `SDS`); label them approximate, since the daily reset makes the path matter.
-- **Size**: HOWTO's formula, position = account x risk % / (2 x stop distance in %), for 1-2% risk. Without an account size, give it as a share of the account (e.g. a 0.8% SPY stop is about -1.6% on the ETF, so 1% risk is about 60% of the account). Don't ask for or assume the account size.
+- **Size**: HOWTO's rule is all in: the whole account goes into the signal's ETF. State what a stop-out costs on the account (about 2x the SPY stop distance, e.g. a 0.8% SPY stop is about -1.6%) and that a gap past the hard stop costs 2x the gap. Don't ask for or assume the account size.
+- **Overlapping signals** (HOWTO "Overlapping signals"): when a position is already open, a same-direction signal is ignored and the open position keeps its original exits. An opposite signal closes it and flips the whole account into the other ETF, with the new signal's exits and time stop.
 - **Skip checks** (HOWTO "When to skip a trade", applied to the signal's own entry, not to a later open): T1 less than ~1% from entry; price sitting at the POC; price chopping between VAL and VAH with no progress; FOMC, CPI or major earnings before the time stop. You can't see the economic calendar, so name the likely events in the window if you know them and tell the user to confirm the dates.
 
 ### 6. Answer
@@ -93,7 +94,7 @@ Don't use the word "runner" (the user found it unclear). Name the position inste
 Always run `journal.py list` first and open with the active positions. Then give one if-then table where every row is a concrete SPY price or close condition, an action naming the position or the new ETF trade, and an order type. Build the rows only from:
 
 - each open position's exits: T1 (if not yet hit), T2, the stop on a close, the hard stop (as a stop order placed now), and the time stop date;
-- `armed next bar` levels that pass R:R (new BUY/SELL at the level, with T1, stop, hard stop and size at 1% risk);
+- `armed next bar` levels that pass R:R (new BUY/SELL at the level, with T1, stop, hard stop, all in);
 - the Value Area rules 1-6 that can fire at VAH/VAL from where price is, phrased as "if the model prints it" at the close;
 - a last row for "none of the above": keep the positions and re-run the model after each close.
 
@@ -132,7 +133,7 @@ Keep it tight, using tables for levels and timing.
 <median bars to T1, 80% figure -> time stop date; second-anchor check; sample-size caveat>
 
 ### ETF plan (SSO / SDS)
-<only for a live/open signal: which ETF, a table of T1 / T2 / stop / hard stop as SPY price, SPY % and approximate ETF %, time stop date, position size as a share of the account at 1-2% risk>
+<only for a live/open signal: which ETF, a table of T1 / T2 / stop / hard stop as SPY price, SPY % and approximate ETF %, time stop date, size: all in, with the account % a stop-out costs; if a position is already open, whether this signal is ignored (same direction) or flips it (opposite)>
 <or: no signal - what would trigger the next one, and which ETF it would use>
 
 ### Before acting

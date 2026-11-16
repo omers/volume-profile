@@ -126,7 +126,8 @@ The history stats are optimistic, because the profile levels are built from the 
 | **Exit on target** | Take profit when SPY reaches **T1**. Hold part of the position for T2 only if there's enough time left | The ETF's drag grows while you wait, so don't wait for perfect |
 | **Exit on stop** | Exit when a **SPY daily candle closes** beyond the script's stop, or SPY touches the hard stop. Decide on SPY's price, not the ETF's | SPY's price is the actual signal, and the ETF's price is noisy |
 | **Time stop** | Exit if SPY hasn't reached T1 by the bar in the `Time stop` row (80% of past T1 hits arrived by then; 13 bars on SPY now) | Past that point most winners would already have paid, and the drag keeps growing |
-| **Size** | Risk only **1–2% of your account** per trade. Position size = account × risk % ÷ (2 × stop distance in %). A 0.8% SPY stop is about a 1.6% loss on the ETF, so 1% risk means a position of about 60% of the account | The ETF moves 2× SPY, so a size that suits SPY is twice the risk here |
+| **Size** | **All in**: put the whole account into the signal's ETF. A stop-out then costs about 2× the SPY stop distance on the whole account (a 0.8% SPY stop is about −1.6%), and a gap past the hard stop costs 2× the gap | Only one direction is held at a time, so there's no second position to split the account with |
+| **Overlapping signals** | Same-direction signal while in a trade: **ignore it**. Keep the position and its original exits (T1, T2, stop, hard stop, time stop). Opposite signal while in a trade: **close the position and flip**. Sell the ETF at that signal's entry, put everything into the other ETF, and use the new signal's exits and time stop | You're already all in that direction, and an opposite signal means the old trade's reason is gone |
 
 ### Reading the ETF from SPY
 
@@ -163,8 +164,8 @@ These checks apply to the signal itself (its entry, T1 and stop). A gap at the n
 ## 4. A realistic approach
 
 1. Run the script on SPY for a few weeks and write down each signal. Track whether **SPY reached T1 within the time stop**, and what SSO or SDS would have done over the same days.
-2. If the numbers hold up, start with **small positions**.
-3. Increase size only after 20–30 real trades.
+2. If the numbers hold up, trade it all in (see **Size**), one position at a time.
+3. Re-check the results after 20–30 real trades.
 
 ## Pre-trade checklist
 
@@ -176,5 +177,6 @@ These checks apply to the signal itself (its entry, T1 and stop). A gap at the n
 - [ ] T1 is at least ~1% from entry
 - [ ] No FOMC / CPI / major event before the time stop
 - [ ] Right ETF: BUY → SSO, SELL → SDS (never short either)
-- [ ] Position sized so a stop-out loses 1–2% of the account, counting the 2× leverage
+- [ ] Already in a trade? Same direction: ignore the signal. Opposite: close it and flip into the other ETF
+- [ ] Whole account in the ETF (all in); know that a stop-out costs about 2× the SPY stop distance
 - [ ] Exits written down: T1 (SPY price), stop on daily close (SPY price), hard stop (SPY price, placed as an order), time stop (the `Time stop` row)
