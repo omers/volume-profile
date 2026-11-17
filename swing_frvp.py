@@ -10,8 +10,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
+import os
 import statistics
+import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
@@ -534,15 +538,76 @@ def load_csv(path: str) -> List[Bar]:
     return bars
 
 
-def load_yf(ticker: str, start: datetime, interval: str = "1d", warmup_days: int = 60) -> List[Bar]:
-    """Unadjusted bars from Yahoo (like TradingView's default), with warm-up history for the ATR."""
+CACHE_DIR = os.environ.get("FRVP_CACHE_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+
+
+def _fetch_yf(ticker: str, since: datetime, interval: str) -> List[Bar]:
     import yfinance as yf
 
-    df = yf.Ticker(ticker).history(start=start - timedelta(days=warmup_days), interval=interval, auto_adjust=False)
+    df = yf.Ticker(ticker).history(start=since, interval=interval, auto_adjust=False)
     bars = []
     for ts, r in df.iterrows():
         bars.append(Bar(ts.to_pydatetime().replace(tzinfo=None), float(r["Open"]), float(r["High"]), float(r["Low"]), float(r["Close"]), float(r["Volume"])))
     return bars
+
+
+def _cache_read(path: str) -> Optional[dict]:
+    try:
+        with open(path) as f:
+            d = json.load(f)
+        d["bars"] = [Bar(datetime.fromisoformat(r[0]), *r[1:]) for r in d["bars"]]
+        d["since"] = datetime.fromisoformat(d["since"])
+        return d
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _cache_write(path: str, since: datetime, bars: List[Bar]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"since": since.isoformat(), "bars": [[b.time.isoformat(), b.open, b.high, b.low, b.close, b.volume] for b in bars]}, f)
+    os.replace(tmp, path)
+
+
+def load_yf(ticker: str, start: datetime, interval: str = "1d", warmup_days: int = 60,
+            cache_dir: Optional[str] = None, ttl_min: float = 30, refresh: bool = False, history_days: int = 730) -> List[Bar]:
+    """Unadjusted bars from Yahoo (like TradingView's default), with warm-up history for the ATR.
+
+    With `cache_dir` the bars are kept on disk per ticker and interval. A cache younger than `ttl_min`
+    minutes is used as is; an older one is topped up by refetching only the last few days (the newest
+    bar is still forming); `refresh` refetches everything. If Yahoo fails or rate-limits, the cached
+    bars are used with a warning on stderr. Daily bars are cached `history_days` back (default 2 years) on
+    the first fetch, so a later, earlier `start` needs no download. Intraday intervals are capped by Yahoo,
+    so they are cached from `start` only."""
+    since = start - timedelta(days=warmup_days)
+    if not cache_dir:
+        return _fetch_yf(ticker, since, interval)
+
+    path = os.path.join(cache_dir, f"yf_{ticker.upper().replace('/', '_')}_{interval}.json")
+    c = None if refresh else _cache_read(path)
+    if c is not None and c["since"] <= since and c["bars"]:
+        age_min = (time.time() - os.path.getmtime(path)) / 60
+        if age_min < ttl_min:
+            return [b for b in c["bars"] if b.time >= since]
+        top_up_from, old, cover = c["bars"][-1].time - timedelta(days=5), c["bars"], c["since"]
+    else:
+        full = min(since, datetime.now() - timedelta(days=history_days)) if interval == "1d" else since
+        top_up_from, old, cover = full, [], full
+    try:
+        new = _fetch_yf(ticker, top_up_from, interval)
+        if not new:
+            raise RuntimeError("Yahoo returned no bars (rate limited?)")
+    except Exception as e:  # yfinance raises its own rate-limit errors
+        if not old:
+            raise
+        print(f"warning: {ticker}: Yahoo fetch failed ({e}); using cached bars up to {old[-1].time:%Y-%m-%d}", file=sys.stderr)
+        return [b for b in old if b.time >= since]
+    merged = {b.time: b for b in old if b.time < top_up_from}
+    merged.update({b.time: b for b in new})
+    bars = [merged[t] for t in sorted(merged)]
+    _cache_write(path, cover, bars)
+    return [b for b in bars if b.time >= since]
 
 
 # Bars by which a share `q` of the T1 hits had arrived (nearest rank)
@@ -790,6 +855,9 @@ def main() -> None:
     ap.add_argument("--end", help="optional profile end date")
     ap.add_argument("--csv", help="read bars from a CSV instead of Yahoo")
     ap.add_argument("--interval", default="1d", help="Yahoo bar interval, e.g. 1d, 1h")
+    ap.add_argument("--cache-ttl", type=float, default=30, help="minutes a Yahoo cache stays fresh before it is topped up (default 30)")
+    ap.add_argument("--refresh", action="store_true", help="ignore the Yahoo cache and download everything again")
+    ap.add_argument("--no-cache", action="store_true", help="do not read or write the Yahoo cache")
     ap.add_argument("--rows", type=int, default=120)
     ap.add_argument("--max-hold", type=int, default=15, help="bars per trade for the History stats")
     ap.add_argument("--t1-horizon", type=int, default=40, help="bars each signal is followed for the bars-to-T1 stats")
@@ -808,7 +876,8 @@ def main() -> None:
         rows=a.rows, max_hold=a.max_hold, t1_horizon=a.t1_horizon, min_rr=a.min_rr, cooldown=a.cooldown,
         stop_mode=a.stop_mode, stop_rule=a.stop_rule, use_pull=not a.no_pullback,
     )
-    bars = load_csv(a.csv) if a.csv else load_yf(a.ticker, cfg.start, a.interval)
+    bars = load_csv(a.csv) if a.csv else load_yf(a.ticker, cfg.start, a.interval, cache_dir=None if a.no_cache else CACHE_DIR,
+                                                  ttl_min=a.cache_ttl, refresh=a.refresh)
     res = SwingFRVP(cfg).run(bars)
     print(report(res, cfg, a.signals))
     if a.plot or a.save:

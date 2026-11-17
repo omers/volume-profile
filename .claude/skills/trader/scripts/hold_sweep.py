@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))   # repo root, for swing_frvp
-from swing_frvp import Config, SwingFRVP, load_csv, load_yf, t1_within  # noqa: E402
+from swing_frvp import CACHE_DIR, Config, SwingFRVP, load_csv, load_yf, t1_within  # noqa: E402
 
 WINDOWS = [5, 10, 15, 20, 30]
 
@@ -128,11 +128,12 @@ def main() -> None:
     ap.add_argument("--windows", type=int, nargs="+", default=WINDOWS)
     ap.add_argument("--csv")
     ap.add_argument("--interval", default="1d")
+    ap.add_argument("--refresh", action="store_true", help="ignore the Yahoo cache and download everything again")
     a = ap.parse_args()
 
     anchors = ([datetime.fromisoformat(x) for x in a.anchors] if a.anchors else
                sorted({Config().start, today - timedelta(days=91), today - timedelta(days=274)}))
-    bars = load_csv(a.csv) if a.csv else load_yf(a.ticker, min(anchors), a.interval)
+    bars = load_csv(a.csv) if a.csv else load_yf(a.ticker, min(anchors), a.interval, cache_dir=CACHE_DIR, refresh=a.refresh)
     if bars:
         print(f"Last bar {bars[-1].time:%Y-%m-%d}  close {bars[-1].close:.2f}")
     for anc in anchors:

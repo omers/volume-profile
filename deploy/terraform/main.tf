@@ -1,14 +1,21 @@
+# Module: the executor Lambda, its schedule and notifications. The AWS provider (and its region)
+# comes from the calling configuration, e.g. deploy/prod.
 data "aws_caller_identity" "me" {}
+data "aws_region" "current" {}
+
+locals {
+  package_dir = var.package_dir != "" ? var.package_dir : "${path.module}/../build/package"
+}
 
 # ───── Code: deploy/build.sh fills package_dir; the zip (~60 MB) is too big to upload directly, so it goes through S3
 data "archive_file" "package" {
   type        = "zip"
-  source_dir  = var.package_dir
+  source_dir  = local.package_dir
   output_path = "${path.module}/../build/${var.name}.zip"
 }
 
 resource "aws_s3_bucket" "code" {
-  bucket        = "${var.name}-code-${data.aws_caller_identity.me.account_id}-${var.region}"
+  bucket        = "${var.name}-code-${data.aws_caller_identity.me.account_id}-${data.aws_region.current.region}"
   force_destroy = true
 }
 
@@ -65,7 +72,7 @@ resource "aws_lambda_function" "executor" {
   s3_bucket        = aws_s3_object.package.bucket
   s3_key           = aws_s3_object.package.key
   source_code_hash = data.archive_file.package.output_base64sha256
-  memory_size      = 1024
+  memory_size      = 256
   timeout          = 180
 
   environment {

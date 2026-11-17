@@ -8,5 +8,5 @@ output "log_group" {
 
 output "test_command" {
   description = "Runs the function once now, as a dry run that treats the market as open"
-  value       = "aws lambda invoke --region ${var.region} --function-name ${aws_lambda_function.executor.function_name} --cli-binary-format raw-in-base64-out --payload '{\"assume_open\": true}' /dev/stdout"
+  value       = "aws lambda invoke --region ${data.aws_region.current.region} --function-name ${aws_lambda_function.executor.function_name} --cli-binary-format raw-in-base64-out --payload '{\"assume_open\": true}' /dev/stdout"
 }

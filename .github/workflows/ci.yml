@@ -35,9 +35,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
       - name: Format
-        run: terraform -chdir=deploy/terraform fmt -check
+        run: terraform fmt -check -recursive deploy
       - name: Validate
         run: |
           mkdir -p deploy/build/package
-          terraform -chdir=deploy/terraform init -backend=false -input=false
-          terraform -chdir=deploy/terraform validate
+          terraform -chdir=deploy/prod init -backend=false -input=false
+          terraform -chdir=deploy/prod validate

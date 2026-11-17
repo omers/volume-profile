@@ -6,7 +6,10 @@ __pycache__/
 
 # deploy
 deploy/build/
-deploy/terraform/.terraform/
+.terraform/
 *.tfstate
 *.tfstate.*
 terraform.tfvars
+
+# Yahoo data cache
+.cache/

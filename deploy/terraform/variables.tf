@@ -1,17 +1,9 @@
-variable "region" {
-  description = "AWS region for the function"
-  type        = string
-  default     = "us-east-1"
-}
-
 variable "name" {
   description = "Name of the Lambda function and the resources around it"
   type        = string
   default     = "frvp-executor"
 }
 
-# Alpaca keys: set them in the shell, never in a file:
-#   export TF_VAR_alpaca_api_key_id=...  TF_VAR_alpaca_secret_key=...
 variable "alpaca_api_key_id" {
   description = "Alpaca API key ID (ALPACA_API_KEY_ID)"
   type        = string
@@ -39,7 +31,7 @@ variable "dry_run" {
 variable "schedule" {
   description = "When the executor runs, in America/New_York time. Default: 9:45 to 15:45 on weekdays, hourly; the run within pre_close_minutes of the close acts on the day's close"
   type        = string
-  default     = "cron(45 9-15 ? * MON-FRI *)"
+  default     = "cron(45 9 ? * MON-FRI *)"
 }
 
 variable "enabled" {
@@ -91,7 +83,7 @@ variable "notify_email" {
 }
 
 variable "package_dir" {
-  description = "Folder built by deploy/build.sh"
+  description = "Folder built by deploy/build.sh; empty = deploy/build/package"
   type        = string
-  default     = "../build/package"
+  default     = ""
 }
