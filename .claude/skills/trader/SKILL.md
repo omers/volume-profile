@@ -77,7 +77,7 @@ For a live or open signal:
 - **No rules of your own**: the verdict comes only from the model's rows and HOWTO's rules. You may mention risks (a big prior move, a gap, a thin bounce) as information, but don't let them override an entry the rules allow, and don't add "paper-trade it first" or "start smaller" hedges beyond HOWTO's sizing. If you think a new filter would help, say so separately and offer to backtest it.
 - **ETF translation**: the ETF moves about 2x SPY's percent move in the trade's direction, so show T1, T2, stop and hard stop as SPY % from entry and as approximate ETF % (2x). Add approximate ETF prices only if you have fetched the ETF's last close (yfinance `SSO` / `SDS`); label them approximate, since the daily reset makes the path matter.
 - **Size**: HOWTO's rule is all in: the whole account goes into the signal's ETF. State what a stop-out costs on the account (about 2x the SPY stop distance, e.g. a 0.8% SPY stop is about -1.6%) and that a gap past the hard stop costs 2x the gap. Don't ask for or assume the account size.
-- **Overlapping signals** (HOWTO "Overlapping signals"): when a position is already open, a same-direction signal is ignored and the open position keeps its original exits. An opposite signal closes it and flips the whole account into the other ETF, with the new signal's exits and time stop.
+- **Overlapping signals** (HOWTO "Overlapping signals"): when a real position is already open (simulated journal rows don't count), a same-direction signal is ignored and the open position keeps its original exits. An opposite signal closes it and flips the whole account into the other ETF, with the new signal's exits and time stop.
 - **Skip checks** (HOWTO "When to skip a trade", applied to the signal's own entry, not to a later open): T1 less than ~1% from entry; price sitting at the POC; price chopping between VAL and VAH with no progress; FOMC, CPI or major earnings before the time stop. You can't see the economic calendar, so name the likely events in the window if you know them and tell the user to confirm the dates.
 
 ### 6. Answer
@@ -91,12 +91,18 @@ Don't use the word "runner" (the user found it unclear). Name the position inste
 
 #### Action plan format
 
-Always run `journal.py list` first and open with the active positions. Then give one if-then table where every row is a concrete SPY price or close condition, an action naming the position or the new ETF trade, and an order type. Build the rows only from:
+**Real positions only.** Always run `journal.py list --real true` first and open with the active positions from it. Simulated rows (`real=false`: backtest, paper) are ignored in daily and weekly plans: don't list them, don't build rows from their exits, and don't treat them as an open position when applying HOWTO's overlapping-signals rule. The plan is written as if they didn't exist.
 
-- each open position's exits: T1 (if not yet hit), T2, the stop on a close, the hard stop (as a stop order placed now), and the time stop date;
+- **A real position is open**: the plan says what to do with it (its exits below), plus how new signals interact with it (same direction ignored, opposite flips).
+- **No real position is open**: say "None." and the plan says what to do with no position: a late entry on the model's latest signal if HOWTO's "If you missed the close" rule still allows one (signal still open, T1 not hit, price between the stop and T1; keep the signal's own exits and time stop), plus the new-entry rows below.
+
+Then give one if-then table where every row is a concrete SPY price or close condition, an action naming the position or the new ETF trade, and an order type. Build the rows only from:
+
+- each open real position's exits: T1 (if not yet hit), T2, the stop on a close, the hard stop (as a stop order placed now), and the time stop date;
+- with no real position, the late entry on the latest open signal (above), if the rule allows it;
 - `armed next bar` levels that pass R:R (new BUY/SELL at the level, with T1, stop, hard stop, all in);
 - the Value Area rules 1-6 that can fire at VAH/VAL from where price is, phrased as "if the model prints it" at the close;
-- a last row for "none of the above": keep the positions and re-run the model after each close.
+- a last row for "none of the above": keep the real position (or stay flat) and re-run the model after each close.
 
 "Weekly" covers the bars through Friday; "today" covers the next session. Armed levels are for the next bar only, so say they change daily. Add one **Watch** line for events in the window (to confirm), and the one-line disclaimer. No timing tables, anchor sweeps or explanations unless asked.
 
@@ -106,7 +112,7 @@ Always run `journal.py list` first and open with the active positions. Then give
 
 ### Active positions
 | Position | Entry | Last | Open P&L | Signal | Status |
-<one row per open journal row: shares + ETF (real/paper), entry price and date, last ETF close, P&L $ and %, the signal it came from, what's been hit and what's left>
+<one row per open real journal row (never real=false rows): shares + ETF, entry price and date, last ETF close, P&L $ and %, the signal it came from, what's been hit and what's left>
 <or: "None.">
 
 ### If-then
@@ -172,6 +178,8 @@ python3 .claude/skills/trader/scripts/journal.py list [--real true|false]
 - For a partial close ("sold 40 of my 78"), pass `--amount 40`: the script closes 40 on that row and keeps the rest open in a new row right after it.
 
 **After every change**, show the row the script printed (with the P&L for a close). For a real position that matches the model's latest signal, add the plan's exits (T1, stop, hard stop, time stop date) in one or two lines, so the user knows what to watch. Don't re-run the full analysis unless asked.
+
+**Simulated trades** (`real=false`): open and close them whenever the user asks, or when a backtest or paper exercise needs them. They're for the user's own record only: daily and weekly plans ignore them (see "Action plan format"), and only show them when the user asks about trades, positions or P&L.
 
 **When asked about trades, positions or P&L**, run `list` (with `--real` to separate real from backtest) and summarize. Keep real and backtest results apart; never add them together.
 

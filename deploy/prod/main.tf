@@ -57,7 +57,7 @@ module "executor" {
   alpaca_paper = true
   dry_run      = false
   enabled      = true
-
+  schedule    = "cron(0 9-16 ? * MON-FRI *)" # 10:00am ET, every weekday
   ticker        = "SPY"
   profile_start = "2026-03-30"
   allocation    = 0.98
