@@ -57,7 +57,7 @@ module "executor" {
   alpaca_paper  = true
   dry_run       = false
   enabled       = true
-  schedule      = "cron(0 9-16 ? * MON-FRI *)" # hourly 9:00-16:00 ET on weekdays (the module sets the America/New_York timezone)
+  schedule      = "cron(45 9-15 ? * MON-FRI *)" # hourly 9:45-15:45 ET on weekdays (America/New_York); 15:45 is the pre-close run
   ticker        = "SPY"
   profile_start = "2026-03-30"
   allocation    = 0.98
