@@ -15,6 +15,7 @@ The user is researching their own system. Present everything as **what the model
 - `HOWTO.md` — signal rules, stop/target placement, the SSO/SDS trade mapping and sizing, skip rules, pre-trade checklist. Read the "How to adapt the trade" and "When to skip a trade" sections before writing a trade plan; they may have changed since this skill was written.
 - `scripts/hold_sweep.py` (this skill) — bars-to-target statistics across anchors.
 - `scripts/trading_days.py` (this skill) — NYSE trading-day counts (used for the time stop date; its `expiries` command is no longer needed).
+- `scripts/stop_sweep.py` (this skill) — backtests stop variants (the model's close stop, a touch stop as a resting order, 1.25-2x wider, hard stop only, two model settings) on the model's signals with HOWTO's exits, per anchor. Run it when the user asks whether the stop is too tight or too loose, or before proposing any stop change. As of 2026-11-18 no wider stop beat the model's close stop on every anchor, and gains came from one or two trades, so the model's stop stayed; re-run as signals accumulate.
 - `scripts/journal.py` (this skill) — reads and writes the trade journal `trades.csv` at the repo root (see "Trade journal").
 
 Run everything from the repo root with `uv run python ...` (the venv has yfinance and matplotlib). Ignore the urllib3 `NotOpenSSLWarning`.
@@ -73,9 +74,13 @@ For a live or open signal:
   ```
 
   For an already-open signal, count the bars left from today.
+- **Which exits are orders and which are decisions** (learned 2026-11-18: the user placed the close-based stop as an SSO stop order at 62.70; SSO touched it within the day and sold, while SPY never closed below 729.48 and the model still held the trade. A -$84 loss the rules didn't call for). Present the exits in two groups and never mix them:
+  - **Orders to place now**: only the **hard stop**, as a stop order on the ETF (and optionally T2 or T1 as a limit sell). These are the only exits that get an ETF price.
+  - **Decisions on SPY at the close**: the **stop on a close** and the **time stop**. Never give these an ETF price and never tell the user to place them as stop orders: a resting stop triggers on an intraday touch, which is exactly the noise the close-based stop exists to ignore, and SSO's intraday swing is 2x SPY's. Say: "at ~15:45 ET, if SPY is below <stop>, sell at market or on close; otherwise hold". This matches the executor, which keeps only the hard stop as a resting order and acts on the close stop at its pre-close run.
+- **Pricing the hard-stop order on the ETF**: use the executor's formula (`etf_stop_price` in `deploy/executor.py`): ETF stop = ETF fill x (1 + 2 x direction x (hard - SPY at fill) / SPY at fill), with the user's actual ETF fill and SPY's price at that moment (ask for the fill time, or use SPY at the time they report it; never the previous close). Say it's approximate: on 2026-11-18 SSO traded to 62.19 while SPY stayed 0.03% above the 726.58 hard stop, so near the level the ETF can trigger slightly early. Don't add a buffer of your own; if the user wants one, offer to backtest it.
 - **Late entry** (HOWTO "If you missed the close"): when the user hasn't entered a signal that fired at a previous close, apply the rule as written. Price between the stop and T1 means buy at the next open (or now, if the market is open), even after a gap toward T1. Beyond the stop means the signal failed; at or beyond T1 means it already paid. Keep the signal bar's exits and time stop. **Never recompute R:R from the open or the current price and turn it into a "skip", "wait" or "don't chase" verdict.** That untested rule kept the user out of the 2026-11-06 BUY, which hit T1 the same day, and over the 12 signals since 2026-03-30 it skipped 3 winners and 1 loser. Once T1 has been hit, there's no new entry on that signal.
 - **No rules of your own**: the verdict comes only from the model's rows and HOWTO's rules. You may mention risks (a big prior move, a gap, a thin bounce) as information, but don't let them override an entry the rules allow, and don't add "paper-trade it first" or "start smaller" hedges beyond HOWTO's sizing. If you think a new filter would help, say so separately and offer to backtest it.
-- **ETF translation**: the ETF moves about 2x SPY's percent move in the trade's direction, so show T1, T2, stop and hard stop as SPY % from entry and as approximate ETF % (2x). Add approximate ETF prices only if you have fetched the ETF's last close (yfinance `SSO` / `SDS`); label them approximate, since the daily reset makes the path matter.
+- **ETF translation**: the ETF moves about 2x SPY's percent move in the trade's direction, so show T1, T2, stop and hard stop as SPY % from entry and as approximate ETF % (2x), for the P&L picture. ETF *prices* go only on orders (the hard stop, and T1/T2 limits), computed as above; label them approximate, since the daily reset makes the path matter. The stop on a close gets no ETF price.
 - **Size**: HOWTO's rule is all in: the whole account goes into the signal's ETF. State what a stop-out costs on the account (about 2x the SPY stop distance, e.g. a 0.8% SPY stop is about -1.6%) and that a gap past the hard stop costs 2x the gap. Don't ask for or assume the account size.
 - **Overlapping signals** (HOWTO "Overlapping signals"): when a real position is already open (simulated journal rows don't count), a same-direction signal is ignored and the open position keeps its original exits. An opposite signal closes it and flips the whole account into the other ETF, with the new signal's exits and time stop.
 - **Skip checks** (HOWTO "When to skip a trade", applied to the signal's own entry, not to a later open): T1 less than ~1% from entry; price sitting at the POC; price chopping between VAL and VAH with no progress; FOMC, CPI or major earnings before the time stop. You can't see the economic calendar, so name the likely events in the window if you know them and tell the user to confirm the dates.
@@ -98,7 +103,7 @@ Don't use the word "runner" (the user found it unclear). Name the position inste
 
 Then give one if-then table where every row is a concrete SPY price or close condition, an action naming the position or the new ETF trade, and an order type. Build the rows only from:
 
-- each open real position's exits: T1 (if not yet hit), T2, the stop on a close, the hard stop (as a stop order placed now), and the time stop date;
+- each open real position's exits: T1 (if not yet hit), T2, the stop on a close, the hard stop (as a stop order placed now), and the time stop date. The `Order` column for the stop on a close and the time stop says "decide at ~15:45 ET on SPY, market/MOC sell", never a stop order or an ETF price; only the hard stop row says "stop order now at ETF ~X";
 - with no real position, the late entry on the latest open signal (above), if the rule allows it;
 - `armed next bar` levels that pass R:R (new BUY/SELL at the level, with T1, stop, hard stop, all in);
 - the Value Area rules 1-6 that can fire at VAH/VAL from where price is, phrased as "if the model prints it" at the close;
@@ -139,7 +144,7 @@ Keep it tight, using tables for levels and timing.
 <median bars to T1, 80% figure -> time stop date; second-anchor check; sample-size caveat>
 
 ### ETF plan (SSO / SDS)
-<only for a live/open signal: which ETF, a table of T1 / T2 / stop / hard stop as SPY price, SPY % and approximate ETF %, time stop date, size: all in, with the account % a stop-out costs; if a position is already open, whether this signal is ignored (same direction) or flips it (opposite)>
+<only for a live/open signal: which ETF, a table of T1 / T2 / stop / hard stop as SPY price, SPY % and approximate ETF %, then "orders to place now" (hard stop as an ETF stop price) apart from "decide on SPY at ~15:45 ET" (stop on a close, time stop date), size: all in, with the account % a stop-out costs; if a position is already open, whether this signal is ignored (same direction) or flips it (opposite)>
 <or: no signal - what would trigger the next one, and which ETF it would use>
 
 ### Before acting
@@ -177,7 +182,7 @@ python3 .claude/skills/trader/scripts/journal.py list [--real true|false]
 - The script matches the one open row for that symbol. If it reports several open rows, show them and ask which one (then pass `--row N`), or pass `--real` when that alone disambiguates.
 - For a partial close ("sold 40 of my 78"), pass `--amount 40`: the script closes 40 on that row and keeps the rest open in a new row right after it.
 
-**After every change**, show the row the script printed (with the P&L for a close). For a real position that matches the model's latest signal, add the plan's exits (T1, stop, hard stop, time stop date) in one or two lines, so the user knows what to watch. Don't re-run the full analysis unless asked.
+**After every change**, show the row the script printed (with the P&L for a close). For a real position that matches the model's latest signal, add the plan's exits in two lines, split as in step 5: the order to place now (hard stop as an ETF stop price from their fill) and what to check on SPY at ~15:45 ET (stop on a close, time stop date). If the buy doesn't match an entry the rules allow (e.g. the signal's T1 was already hit), say so first. Don't re-run the full analysis unless asked.
 
 **Simulated trades** (`real=false`): open and close them whenever the user asks, or when a backtest or paper exercise needs them. They're for the user's own record only: daily and weekly plans ignore them (see "Action plan format"), and only show them when the user asks about trades, positions or P&L.
 

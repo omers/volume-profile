@@ -27,7 +27,9 @@ jobs:
       - name: Executor smoke test (fake broker, no network)
         run: uv run python tests/executor_smoke.py "$RUNNER_TEMP/bars.csv"
       - name: Skill scripts import
-        run: uv run python -c "import sys; sys.path.insert(0, '.'); sys.path.insert(0, '.claude/skills/trader/scripts'); import hold_sweep, journal"
+        run: uv run python -c "import sys; sys.path.insert(0, '.'); sys.path.insert(0, '.claude/skills/trader/scripts'); import hold_sweep, journal, stop_sweep"
+      - name: Stop sweep (synthetic CSV)
+        run: uv run python .claude/skills/trader/scripts/stop_sweep.py TEST --csv "$RUNNER_TEMP/bars.csv" --anchors 2026-01-01 --include-today
 
   terraform:
     runs-on: ubuntu-latest
