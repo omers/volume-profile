@@ -54,10 +54,10 @@ module "executor" {
   alpaca_secret_key = var.alpaca_secret_key
 
   # Paper account and dry run first; turn off dry_run, then switch to live keys, once the logs look right
-  alpaca_paper = true
-  dry_run      = false
-  enabled      = true
-  schedule    = "cron(0 9-16 ? * MON-FRI *)" # 10:00am ET, every weekday
+  alpaca_paper  = true
+  dry_run       = false
+  enabled       = true
+  schedule      = "cron(0 9-16 ? * MON-FRI *)" # hourly 9:00-16:00 ET on weekdays (the module sets the America/New_York timezone)
   ticker        = "SPY"
   profile_start = "2026-03-30"
   allocation    = 0.98
