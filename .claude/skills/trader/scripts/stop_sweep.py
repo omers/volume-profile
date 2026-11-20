@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))   # repo root, for swing_frvp
-from swing_frvp import CACHE_DIR, Config, SwingFRVP, load_csv, load_yf  # noqa: E402
+from swing_frvp import CACHE_DIR, Config, SwingFRVP, load_csv, load_yf, side_etf  # noqa: E402
 
 # (name, Config overrides, stop distance multiplier, stop rule, hard stop only)
 VARIANTS = [
@@ -119,7 +119,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                   f"{sum(r <= 0 for r in rs):4} {min(rs):7.2f} {stops:5} {n_open:4}")
             if a.detail:
                 for s, r, h in out:
-                    print(f"     {s.time:%Y-%m-%d} {'BUY ' if s.dir == 1 else 'SELL'} {r * 100:6.2f}% {h}")
+                    print(f"     {s.time:%Y-%m-%d} {side_etf(s.dir)} {r * 100:6.2f}% {h}")
 
 
 if __name__ == "__main__":

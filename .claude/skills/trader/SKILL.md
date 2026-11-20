@@ -66,6 +66,7 @@ Only build a trade plan for a signal that is **live on the last bar** or **still
 
 For a live or open signal:
 
+- **Naming**: the model prints a bearish (SELL) signal as `BUY SDS`, since it is a purchase of SDS and never a sale or short. Write it that way in every answer (the direction may be called a "SELL signal -> BUY SDS"), never "SELL SDS" or "short". Older screenshots from before this change may still show a `SELL SDS` tag.
 - **Instrument**: BUY -> buy **SSO** (2x S&P 500). SELL -> buy **SDS** (-2x S&P 500). Shares only; always long the ETF, never short SSO or SDS. There is no expiry, strike or spread.
 - **Exits, in SPY prices** (decisions are made on SPY, not on the ETF's price): T1 (take profit), T2 (for the shares kept after T1, only if time remains), stop on a **daily close** beyond `Stop`, immediate exit at `Hard stop` (tell the user to place it as a real order, since a gap past a close-based stop loses 2x the SPY gap), and the time stop date. Get the date with
 

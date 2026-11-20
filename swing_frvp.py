@@ -26,7 +26,7 @@ ETF_SELL = "SDS"
 
 
 def side_etf(d: int) -> str:
-    return f"BUY {ETF_BUY}" if d == 1 else f"SELL {ETF_SELL}"
+    return f"BUY {ETF_BUY if d == 1 else ETF_SELL}"
 
 
 STOP_VOL = "volume"   # Volume zone (behind the level's volume)

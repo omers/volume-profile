@@ -21,6 +21,10 @@ The Pine script can't be compiled here; after editing it, say so and ask the use
 
 `HOWTO.md` (also the package readme) is the user-facing trading guide: chart legend, the 8 signal rules, stop/target placement, filters, and how to turn signals into SPY options trades. Keep it in sync when signal rules or defaults change.
 
+## Wording
+
+A SELL signal is traded by buying SDS, never by shorting. When describing trades to the user (plans, journal, answers), write it as **BUY SDS**, not "SELL SDS". The model itself prints `BUY SDS` for a SELL signal (`side_etf` in `swing_frvp.py`, and the Pine labels and table rows, which must match). The alert is still named `SELL signal`, since that names the direction.
+
 ## Commands
 
 Dependencies are managed with `uv` (Python ≥3.9; the local `.venv` is 3.9, so keep `from __future__ import annotations` and `typing.List`-style hints). Data comes from Yahoo via `yfinance` (unadjusted bars) unless `--csv` is given.
