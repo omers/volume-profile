@@ -1,1 +1,4 @@
 open_date,symbol,amount,buy_price,real,sell_date,close_price
+2026-11-06,SSO,39,63.85,false,2026-11-09,66.85
+2026-11-06,SSO,39,63.85,false,,
+2026-11-18,SSO,100,63.54,true,2026-11-18,62.70
