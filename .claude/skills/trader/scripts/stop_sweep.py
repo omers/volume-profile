@@ -35,6 +35,11 @@ VARIANTS = [
     ("hard stop only", {}, 1.0, "close", True),
     ("model stop_buf 0.5", {"stop_buf": 0.5}, 1.0, "close", False),
     ("model min_stop_atr 1.0", {"min_stop_atr": 1.0}, 1.0, "close", False),
+    ("min_rr 0 (no filter)", {"min_rr": 0}, 1.0, "close", False),
+    ("min_rr 1.0", {"min_rr": 1.0}, 1.0, "close", False),
+    ("min_rr 2.0", {"min_rr": 2.0}, 1.0, "close", False),
+    ("min_rr 2.5", {"min_rr": 2.5}, 1.0, "close", False),
+    ("min_rr 3.0", {"min_rr": 3.0}, 1.0, "close", False),
 ]
 
 
