@@ -29,9 +29,9 @@ variable "dry_run" {
 }
 
 variable "schedule" {
-  description = "When the executor runs, in America/New_York time. Default: 9:45 to 15:45 on weekdays, hourly; the run within pre_close_minutes of the close acts on the day's close"
+  description = "When the executor runs, in America/New_York time. Default: every 15 minutes from 9:00 to 15:45 on weekdays (runs before the 9:30 open do nothing); the run within pre_close_minutes of the close (15:45) acts on the day's close"
   type        = string
-  default     = "cron(45 9 ? * MON-FRI *)"
+  default     = "cron(0/15 9-15 ? * MON-FRI *)"
 }
 
 variable "enabled" {

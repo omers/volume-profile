@@ -170,7 +170,7 @@ These checks apply to the signal itself (its entry, T1 and stop). A gap at the n
 
 ## 5. Automated trading (Alpaca on AWS Lambda)
 
-[deploy/executor.py](deploy/executor.py) trades these rules on an Alpaca account. It runs as an AWS Lambda function, deployed with Terraform: the module in [deploy/terraform](deploy/terraform), called from [deploy/prod/main.tf](deploy/prod/main.tf), which sets the region and the settings. It runs every hour from 9:45 to 15:45 New York time on weekdays. Each run follows the model on the SPY chart and does the following:
+[deploy/executor.py](deploy/executor.py) trades these rules on an Alpaca account. It runs as an AWS Lambda function, deployed with Terraform: the module in [deploy/terraform](deploy/terraform), called from [deploy/prod/main.tf](deploy/prod/main.tf), which sets the region and the settings. It runs every 15 minutes from 9:30 to 15:45 New York time on weekdays (the last run, 15:45, is the pre-close run). Each run follows the model on the SPY chart and does the following:
 
 | When | What it does |
 |---|---|

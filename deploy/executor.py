@@ -1,6 +1,6 @@
 """Alpaca executor for the swing_frvp model: trades HOWTO.md's SSO/SDS rules automatically.
 
-Runs as an AWS Lambda function on a schedule (hourly in market hours, see deploy/terraform) or locally:
+Runs as an AWS Lambda function on a schedule (every 15 minutes in market hours, see deploy/terraform) or locally:
 
     ALPACA_API_KEY_ID=... ALPACA_SECRET_KEY=... uv run --with alpaca-py python deploy/executor.py
 

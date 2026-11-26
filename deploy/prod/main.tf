@@ -46,6 +46,13 @@ variable "alpaca_secret_key" {
   sensitive   = true
 }
 
+# Trade notification address: set it in terraform.tfvars or TF_VAR_notify_email, not here (the repo is public)
+variable "notify_email" {
+  description = "Email address subscribed to the executor's trade notifications; empty for none"
+  type        = string
+  default     = ""
+}
+
 module "executor" {
   source = "../terraform"
 
@@ -57,13 +64,13 @@ module "executor" {
   alpaca_paper  = true
   dry_run       = false
   enabled       = true
-  schedule      = "cron(45 9-15 ? * MON-FRI *)" # hourly 9:45-15:45 ET on weekdays (America/New_York); 15:45 is the pre-close run
+  schedule      = "cron(0/15 9-15 ? * MON-FRI *)" # every 15 min, 9:00-15:45 ET on weekdays (America/New_York); the 9:00 and 9:15 runs find the market closed and do nothing; 15:45 is the pre-close run
   ticker        = "SPY"
   profile_start = "2026-03-30"
   allocation    = 0.98
   t1_fraction   = 0.5
   min_t1_pct    = 1.0
-  notify_email  = ""
+  notify_email  = var.notify_email
 }
 
 output "function_name" {
