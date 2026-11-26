@@ -598,6 +598,15 @@ def load_yf(ticker: str, start: datetime, interval: str = "1d", warmup_days: int
         new = _fetch_yf(ticker, top_up_from, interval)
         if not new:
             raise RuntimeError("Yahoo returned no bars (rate limited?)")
+        # Yahoo's unadjusted bars are still split-adjusted: if the closed bars both fetches hold disagree,
+        # the cached history is on another scale (a split), so refetch all of it
+        prev = {b.time: b.close for b in old[:-1]}
+        if any(b.time in prev and prev[b.time] and abs(b.close / prev[b.time] - 1) > 0.01 for b in new):
+            print(f"warning: {ticker}: cached prices differ from Yahoo's (split?); refetching all", file=sys.stderr)
+            new = _fetch_yf(ticker, cover, interval)
+            if not new:
+                raise RuntimeError("Yahoo returned no bars (rate limited?)")
+            old, top_up_from = [], cover
     except Exception as e:  # yfinance raises its own rate-limit errors
         if not old:
             raise

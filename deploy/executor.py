@@ -371,8 +371,16 @@ def run(broker, load_bars: Callable[[], List[m.Bar]], st: Settings, assume_open:
     # ── Exits of what is held
     managed: Dict[str, Tuple[Plan, Order]] = {}
     unmanaged = False
+    def closed_out(p: Plan) -> bool:
+        """The trade's position was sold in full: a filled close (-x) or hard-stop (-h) order."""
+        return any(x.status == "filled" and (x.cid.startswith(p.key + "-x") or x.cid.startswith(p.key + "-h"))
+                   for x in r.orders)
+
     for sym, q in held.items():
-        ent = next(((p, o) for p, o in entries if o.symbol == sym and o.filled_qty > 0), None)
+        # The newest filled entry in this ETF whose trade is still open, and that bought at least what is held;
+        # an older, finished trade must not adopt a position bought by hand later
+        ent = next(((p, o) for p, o in entries
+                    if o.symbol == sym and o.filled_qty > 0 and not closed_out(p) and q <= o.filled_qty), None)
         if ent is None:
             r.note(f"{q:g} {sym} not opened by this executor: left alone, and no new trades while it's held")
             unmanaged = True
@@ -432,13 +440,19 @@ def run(broker, load_bars: Callable[[], List[m.Bar]], st: Settings, assume_open:
     if cand.etf in managed:
         r.note(f"Same-direction signal while holding {cand.etf}: ignored, original exits kept ({cand.text()})")
         return {"actions": r.actions, "notes": r.notes}
+    older = [p for p, _ in managed.values() if p.day >= cand.day]
+    if older:
+        r.note(f"Opposite signal is not newer than the held trade ({older[0].key}): not flipping ({cand.text()})")
+        return {"actions": r.actions, "notes": r.notes}
     for sym, (p, _) in managed.items():
         r.close_position(sym, p.key, f"opposite signal: flipping to {cand.etf}")
 
     px = broker.price(cand.etf)
     cash = broker.cash()
     if st.dry_run:
-        cash += sum(q * broker.price(s) for s, q in held.items() if s in managed)
+        # Nothing was really sold: add back every held position, all of which this run closed
+        # (an exit or the flip; an outside or same-direction position returned above)
+        cash += sum(q * broker.price(s) for s, q in held.items())
     qty = math.floor(cash * st.allocation / px)
     if qty < 1:
         r.note(f"Not enough cash ({cash:.2f}) for one {cand.etf} at {px:.2f}")
@@ -457,8 +471,12 @@ def _notify(subject: str, body: str) -> None:
     arn = os.environ.get("NOTIFY_TOPIC_ARN")
     if not arn:
         return
-    import boto3
-    boto3.client("sns").publish(TopicArn=arn, Subject=subject[:100], Message=body)
+    try:
+        import boto3
+        # SNS wants a subject shorter than 100 characters
+        boto3.client("sns").publish(TopicArn=arn, Subject=subject[:99], Message=body)
+    except Exception:  # noqa: BLE001 - a lost email must not fail a run that already traded
+        log.exception("SNS notification failed")
 
 
 def handler(event=None, context=None) -> Dict:
