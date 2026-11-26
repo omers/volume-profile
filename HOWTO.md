@@ -24,7 +24,7 @@ Defaults are set for this plan: start 30 Mar 2026, min reward:risk 1.5, 15 bars 
 | **Solid blue lines**, labels `VAH` / `VAL`, with light blue shading between | Value Area High / Low: the range holding 70% of the volume | The edges of value. All signals fire at these two lines |
 | **Orange dashed lines**, label `HVN` | High-volume nodes: volume peaks | Support/resistance and the usual targets |
 | **Gray dotted lines**, label `LVN` | Low-volume nodes inside the Value Area | Thin spots price tends to move through fast |
-| Green `BUY` tag under a candle / red `SELL` tag above a candle | A signal on that candle's close | Hover over it for the reason, entry, T1, T2, stop, R:R and its result |
+| Green `BUY SSO` tag under a candle / red `BUY SDS` tag above a candle | A signal on that candle's close, with the ETF to buy (the table's `Latest signal`, `Filtered` and `Armed next bar` rows and the alerts name it too) | Hover over it for the reason, entry, T1, T2, stop, R:R and its result |
 | Green zone with `T1` (thick green) and `T2` (dashed green) lines | Reward zone of the latest signal | Where to take profit. Drawn slightly in front of the level, since price often turns just before it |
 | Red zone with `Stop (on close)` (thick red) line | Risk zone of the latest signal | Exit if a **daily candle closes** beyond it |
 | Dotted red line, `Hard stop` | 1.5× the normal stop distance | Exit **immediately** if price touches it, even mid-day |
@@ -122,18 +122,36 @@ The history stats are optimistic, because the profile levels are built from the 
 |---|---|---|
 | **Instrument** | BUY signal: buy **SSO**. SELL signal: buy **SDS**. Shares only | Both are long positions, so there is no short-selling or margin, and no expiry to manage |
 | **Entry** | Enter after the signal candle closes (signals 7–8: at the level on the first touch) | The signal is only valid at the close |
+| **Late entry** | If you couldn't buy at the signal close, buy at the **next open**, whatever the gap, unless the open is already beyond the stop or at/beyond T1 (see "If you missed the close") | Since 30 Mar 2026, entering at the next open gave up little, while skipping gaps dropped more winners than losers |
 | **Exit on target** | Take profit when SPY reaches **T1**. Hold part of the position for T2 only if there's enough time left | The ETF's drag grows while you wait, so don't wait for perfect |
 | **Exit on stop** | Exit when a **SPY daily candle closes** beyond the script's stop, or SPY touches the hard stop. Decide on SPY's price, not the ETF's | SPY's price is the actual signal, and the ETF's price is noisy |
 | **Time stop** | Exit if SPY hasn't reached T1 by the bar in the `Time stop` row (80% of past T1 hits arrived by then; 13 bars on SPY now) | Past that point most winners would already have paid, and the drag keeps growing |
-| **Size** | Risk only **1–2% of your account** per trade. Position size = account × risk % ÷ (2 × stop distance in %). A 0.8% SPY stop is about a 1.6% loss on the ETF, so 1% risk means a position of about 60% of the account | The ETF moves 2× SPY, so a size that suits SPY is twice the risk here |
+| **Size** | **All in**: put the whole account into the signal's ETF. A stop-out then costs about 2× the SPY stop distance on the whole account (a 0.8% SPY stop is about −1.6%), and a gap past the hard stop costs 2× the gap | Only one direction is held at a time, so there's no second position to split the account with |
+| **Overlapping signals** | Same-direction signal while in a trade: **ignore it**. Keep the position and its original exits (T1, T2, stop, hard stop, time stop). Opposite signal while in a trade: **close the position and flip**. Sell the ETF at that signal's entry, put everything into the other ETF, and use the new signal's exits and time stop | You're already all in that direction, and an opposite signal means the old trade's reason is gone |
 
 ### Reading the ETF from SPY
 
 - **Targets and stops in ETF terms:** the ETF moves about 2× SPY's percentage move, in your direction for SSO on a BUY and for SDS on a SELL. T1 at +1.9% in SPY is about +3.8% on the ETF; a stop 0.8% away is about −1.6%. The exact figure differs, because each day resets and the moves compound.
 - **Choppy markets cost money:** over several sideways days the ETF falls even if SPY ends where it started. This is the reason for the time stop, and for preferring 4H or shorter holds when you can.
 - **Gaps:** the stop works on a daily close, so a gap past it loses 2× the SPY gap. The hard stop is your only protection within the day, so place it as a real order.
+- **Only the hard stop is an order:** never place the close-based stop as a stop order on the ETF. A resting stop sells on any intraday touch, and the ETF swings 2× SPY within the day, so it fires on dips that close back above the stop (on 18 Nov 2026 an SSO stop at the close-stop level sold while SPY never closed below it). Check SPY ~15 minutes before the close and sell at market or on close only if it's beyond the stop. For the hard-stop order, convert the SPY level from your actual fill: ETF stop ≈ ETF fill × (1 + 2 × (hard stop − SPY at fill) / SPY at fill) for SSO (minus sign inside for SDS).
 - **After a big move:** these ETFs can have wide spreads at the open after a large gap. Use limit orders.
 - **SDS and SSO are not the same size:** their prices differ, so compute the share count from the ETF's price, not from SPY's.
+
+### If you missed the close
+
+Value Area signals (1–6) exist only once the daily candle closes, which is late evening outside the US. When you can't buy at the close (market-on-close order or after-hours limit order), apply this rule mechanically at the next session's open:
+
+| SPY at the next open | Action |
+|---|---|
+| Between the stop and T1 | **Buy at the open**, even if it gapped toward T1 and R:R from the open is below 1.5 |
+| Beyond the stop (below it on a BUY, above it on a SELL) | No trade: the signal has failed |
+| At or beyond T1 | No trade: the signal has already paid |
+
+- Keep the signal's own exits: T1, T2, stop and hard stop stay the SPY levels from the signal bar, and the time stop is still counted from the signal bar.
+- Don't recompute R:R from the open, and don't wait for a pullback that the model hasn't armed. The 1.5 R:R filter applies to the signal bar only.
+- **Why:** on the 12 SPY signals since 30 Mar 2026 (same exits, 13-bar time stop), entry at the signal close summed to +13.8% SPY and entry at the next open to +12.7%. Skipping whenever R:R from the open was below 1.5 summed to +10.3%: it skipped four trades, and three of them (09-22, 10-14, 11-06) reached T1. The sample is small and has look-ahead bias, so re-check it as signals accumulate.
+- The faster fix is to not miss the close: set the `BUY signal` / `SELL signal` alerts to *Once per bar close* with phone push, or check the live bar ~15 minutes before the close and use a market-on-close order if the setup is already showing.
 
 ## 3. When to skip a trade
 
@@ -142,20 +160,41 @@ The history stats are optimistic, because the profile levels are built from the 
 - **SPY sitting at the POC:** the price is in balance, with no edge in either direction.
 - **T1 less than about 1% from entry:** on a 2× ETF that's about 2%, which is too little to cover slippage and spread.
 
+These checks apply to the signal itself (its entry, T1 and stop). A gap at the next open is **not** a reason to skip; follow "If you missed the close".
+
 ## 4. A realistic approach
 
 1. Run the script on SPY for a few weeks and write down each signal. Track whether **SPY reached T1 within the time stop**, and what SSO or SDS would have done over the same days.
-2. If the numbers hold up, start with **small positions**.
-3. Increase size only after 20–30 real trades.
+2. If the numbers hold up, trade it all in (see **Size**), one position at a time.
+3. Re-check the results after 20–30 real trades.
+
+## 5. Automated trading (Alpaca on AWS Lambda)
+
+[deploy/executor.py](deploy/executor.py) trades these rules on an Alpaca account. It runs as an AWS Lambda function, deployed with Terraform: the module in [deploy/terraform](deploy/terraform), called from [deploy/prod/main.tf](deploy/prod/main.tf), which sets the region and the settings. It runs every 15 minutes from 9:30 to 15:45 New York time on weekdays (the last run, 15:45, is the pre-close run). Each run follows the model on the SPY chart and does the following:
+
+| When | What it does |
+|---|---|
+| Every run, holding a position | Exits on SPY's price: **hard stop** touched → sell all. **T1** touched → sell half (`T1_FRACTION`) and keep the rest for T2. **T2** touched → sell the rest. A GTC stop order on the ETF, translated from the SPY hard stop (2× SPY's % move), protects the position between runs |
+| The run just before the close (within 20 minutes) | **Stop on close**: SPY beyond the stop → sell all. **Time stop**: T1 not reached by the `Time stop` bar → sell all. **Value Area signals 1–6** showing on the day's bar → enter |
+| Every run | **Pullback signals 7–8**: the day's bar touched an armed level → enter. **Late entry**: the latest closed-bar signal wasn't entered and is still open → buy if SPY is between its stop and T1 (see "If you missed the close"). A daily close beyond the stop that the pre-close run missed → sell at the next run |
+
+- **Entries** are all in (`ALLOCATION` of the cash, 98% by default) in SSO for a BUY or SDS for a SELL, at market. The executor skips a signal whose T1 is less than 1% from its entry. A same-direction signal is ignored while in a trade; an opposite one closes the position and flips, if it is newer than the held trade's signal. The other skip checks (events, chop, SPY at the POC) and the State/Profile-shape check are not automated: pause the schedule (`enabled = false` in `deploy/prod/main.tf`) around events you want to sit out.
+- **State**: the Alpaca account is the only record. Every order the executor sends is tagged `frvp-<signal date>-<B|S>`, and the entry order also stores the signal's SPY exits, so a signal is entered once and keeps the exits it had at entry. A position in SSO/SDS that the executor didn't open is left alone, and no new trade starts while it's held. That includes a position bought after the executor's own trade in that ETF was closed, or one larger than its entry. On its first run the executor may enter the latest signal if it's still open and SPY is between its stop and T1. The executor doesn't write `trades.csv`.
+- **Setup**: `deploy/build.sh`, then put the Alpaca keys in the environment (`export TF_VAR_alpaca_api_key_id=...`, `export TF_VAR_alpaca_secret_key=...`) and run `terraform -chdir=deploy/prod init` and `terraform -chdir=deploy/prod apply`. The keys reach the function as environment variables. They are also kept in the Terraform state file, so keep that file private. `dry_run` and `alpaca_paper` are true by default: watch the logs (and `notify_email`) on the paper account before turning off `dry_run` in `deploy/prod/main.tf`, and then before switching to live keys.
+- **Data**: the bars come from Yahoo, the same as the script. If Yahoo fails or is late, the run fails or uses Alpaca's last SPY trade for the day.
+
+**Every change to the trading logic** (signal rules, filters, targets, stops, the time stop, or the trade rules in this guide) **must also be made in `deploy/executor.py`**, so the automated trades keep following this guide.
 
 ## Pre-trade checklist
 
 - [ ] Daily (or 4H) SPY chart, profiles anchored at 2–3 months and 6–12 months
 - [ ] Signal confirmed on a closed candle
+- [ ] Missed the close? Buy at the next open unless it's beyond the stop or at/beyond T1 (no R:R recheck)
 - [ ] R:R to T1 is at least 1.5
 - [ ] `Profile shape` agrees with the signal's direction (or is D)
 - [ ] T1 is at least ~1% from entry
 - [ ] No FOMC / CPI / major event before the time stop
 - [ ] Right ETF: BUY → SSO, SELL → SDS (never short either)
-- [ ] Position sized so a stop-out loses 1–2% of the account, counting the 2× leverage
+- [ ] Already in a trade? Same direction: ignore the signal. Opposite: close it and flip into the other ETF
+- [ ] Whole account in the ETF (all in); know that a stop-out costs about 2× the SPY stop distance
 - [ ] Exits written down: T1 (SPY price), stop on daily close (SPY price), hard stop (SPY price, placed as an order), time stop (the `Time stop` row)

@@ -10,11 +10,24 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
+import os
 import statistics
+import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
+
+# ETF held for each signal: BUY -> SSO (2x S&P 500), SELL -> SDS (-2x S&P 500)
+ETF_BUY = "SSO"
+ETF_SELL = "SDS"
+
+
+def side_etf(d: int) -> str:
+    return f"BUY {ETF_BUY if d == 1 else ETF_SELL}"
+
 
 STOP_VOL = "volume"   # Volume zone (behind the level's volume)
 STOP_BAR = "bar"      # Signal bar (low / high)
@@ -525,15 +538,85 @@ def load_csv(path: str) -> List[Bar]:
     return bars
 
 
-def load_yf(ticker: str, start: datetime, interval: str = "1d", warmup_days: int = 60) -> List[Bar]:
-    """Unadjusted bars from Yahoo (like TradingView's default), with warm-up history for the ATR."""
+CACHE_DIR = os.environ.get("FRVP_CACHE_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+
+
+def _fetch_yf(ticker: str, since: datetime, interval: str) -> List[Bar]:
     import yfinance as yf
 
-    df = yf.Ticker(ticker).history(start=start - timedelta(days=warmup_days), interval=interval, auto_adjust=False)
+    df = yf.Ticker(ticker).history(start=since, interval=interval, auto_adjust=False)
     bars = []
     for ts, r in df.iterrows():
         bars.append(Bar(ts.to_pydatetime().replace(tzinfo=None), float(r["Open"]), float(r["High"]), float(r["Low"]), float(r["Close"]), float(r["Volume"])))
     return bars
+
+
+def _cache_read(path: str) -> Optional[dict]:
+    try:
+        with open(path) as f:
+            d = json.load(f)
+        d["bars"] = [Bar(datetime.fromisoformat(r[0]), *r[1:]) for r in d["bars"]]
+        d["since"] = datetime.fromisoformat(d["since"])
+        return d
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _cache_write(path: str, since: datetime, bars: List[Bar]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"since": since.isoformat(), "bars": [[b.time.isoformat(), b.open, b.high, b.low, b.close, b.volume] for b in bars]}, f)
+    os.replace(tmp, path)
+
+
+def load_yf(ticker: str, start: datetime, interval: str = "1d", warmup_days: int = 60,
+            cache_dir: Optional[str] = None, ttl_min: float = 30, refresh: bool = False, history_days: int = 730) -> List[Bar]:
+    """Unadjusted bars from Yahoo (like TradingView's default), with warm-up history for the ATR.
+
+    With `cache_dir` the bars are kept on disk per ticker and interval. A cache younger than `ttl_min`
+    minutes is used as is; an older one is topped up by refetching only the last few days (the newest
+    bar is still forming); `refresh` refetches everything. If Yahoo fails or rate-limits, the cached
+    bars are used with a warning on stderr. Daily bars are cached `history_days` back (default 2 years) on
+    the first fetch, so a later, earlier `start` needs no download. Intraday intervals are capped by Yahoo,
+    so they are cached from `start` only."""
+    since = start - timedelta(days=warmup_days)
+    if not cache_dir:
+        return _fetch_yf(ticker, since, interval)
+
+    path = os.path.join(cache_dir, f"yf_{ticker.upper().replace('/', '_')}_{interval}.json")
+    c = None if refresh else _cache_read(path)
+    if c is not None and c["since"] <= since and c["bars"]:
+        age_min = (time.time() - os.path.getmtime(path)) / 60
+        if age_min < ttl_min:
+            return [b for b in c["bars"] if b.time >= since]
+        top_up_from, old, cover = c["bars"][-1].time - timedelta(days=5), c["bars"], c["since"]
+    else:
+        full = min(since, datetime.now() - timedelta(days=history_days)) if interval == "1d" else since
+        top_up_from, old, cover = full, [], full
+    try:
+        new = _fetch_yf(ticker, top_up_from, interval)
+        if not new:
+            raise RuntimeError("Yahoo returned no bars (rate limited?)")
+        # Yahoo's unadjusted bars are still split-adjusted: if the closed bars both fetches hold disagree,
+        # the cached history is on another scale (a split), so refetch all of it
+        prev = {b.time: b.close for b in old[:-1]}
+        if any(b.time in prev and prev[b.time] and abs(b.close / prev[b.time] - 1) > 0.01 for b in new):
+            print(f"warning: {ticker}: cached prices differ from Yahoo's (split?); refetching all", file=sys.stderr)
+            new = _fetch_yf(ticker, cover, interval)
+            if not new:
+                raise RuntimeError("Yahoo returned no bars (rate limited?)")
+            old, top_up_from = [], cover
+    except Exception as e:  # yfinance raises its own rate-limit errors
+        if not old:
+            raise
+        print(f"warning: {ticker}: Yahoo fetch failed ({e}); using cached bars up to {old[-1].time:%Y-%m-%d}", file=sys.stderr)
+        return [b for b in old if b.time >= since]
+    merged = {b.time: b for b in old if b.time < top_up_from}
+    merged.update({b.time: b for b in new})
+    bars = [merged[t] for t in sorted(merged)]
+    _cache_write(path, cover, bars)
+    return [b for b in bars if b.time >= since]
 
 
 # Bars by which a share `q` of the T1 hits had arrived (nearest rank)
@@ -574,7 +657,7 @@ def report(res: Result, cfg: Config, show_signals: int = 40) -> str:
         rows.append(("Latest signal", "No signal in range"))
     else:
         rows += [
-            ("Latest signal", f"{'BUY' if s.dir == 1 else 'SELL'} ({s.ago} bars ago, {s.time:%Y-%m-%d}): {s.why}"),
+            ("Latest signal", f"{side_etf(s.dir)} ({s.ago} bars ago, {s.time:%Y-%m-%d}): {s.why}"),
             ("Entry", px(s.entry)),
             ("Now", pct_from(close, s.entry)),
             ("Target 1", pct_from(s.t1, s.entry)),
@@ -607,18 +690,18 @@ def report(res: Result, cfg: Config, show_signals: int = 40) -> str:
         rows.append(("HVN", pct(x) + "  " + vol_text(v)))
     for x, v in sorted(p.top_lvn(cfg.max_nodes), reverse=True):
         rows.append(("LVN", pct(x) + "  " + vol_text(v)))
-    live = {1: "BUY", -1: "SELL"}.get(res.live_dir, "none")
+    live = side_etf(res.live_dir) if res.live_dir else "none"
     rows.append(("Live (last bar)", live + (f": {res.live_why}" if res.live_dir else "")))
     filt = "none"
     if res.live_raw and not res.live_dir:
         reason = f"cooldown ({cfg.cooldown} bars)" if res.live_chop else f"R:R {res.live_rr:.2f} < {cfg.min_rr:g}"
-        filt = f"{'BUY' if res.live_raw == 1 else 'SELL'} {res.live_why} at {px(res.live_entry)}: {reason}"
+        filt = f"{side_etf(res.live_raw)} {res.live_why} at {px(res.live_entry)}: {reason}"
     rows.append(("Filtered (last bar)", filt))
     if not res.armed:
         rows.append(("Armed next bar", "none"))
     else:
         ok = [a for a in res.armed if not cfg.min_rr or a[4] >= cfg.min_rr]
-        side = "BUY" if p.shape_bias == 1 else "SELL"
+        side = side_etf(p.shape_bias)
         txt = (f"{side} on a touch of " + ", ".join(f"{px(x)} (T1 {px(t1)}, stop {px(sl)}, R:R {rr:.1f})" for x, t1, _, sl, rr in ok)
                if ok else "none passes R:R")
         skipped = len(res.armed) - len(ok)
@@ -633,7 +716,7 @@ def report(res: Result, cfg: Config, show_signals: int = 40) -> str:
     if show_signals and res.signals:
         out += ["", f"Signals (last {min(show_signals, len(res.signals))} of {len(res.signals)}):"]
         for sg in res.signals[-show_signals:]:
-            out.append(f"  {sg.time:%Y-%m-%d %H:%M}  {'BUY ' if sg.dir == 1 else 'SELL'}  entry {px(sg.entry)}  T1 {px(sg.t1)}  T2 {px(sg.t2)}  "
+            out.append(f"  {sg.time:%Y-%m-%d %H:%M}  {side_etf(sg.dir):<8}  entry {px(sg.entry)}  T1 {px(sg.t1)}  T2 {px(sg.t2)}  "
                        f"stop {px(sg.stop)}  R:R {sg.rr:.1f}  {sg.why}  ->  {sg.result}")
     return "\n".join(out)
 
@@ -712,10 +795,10 @@ def plot(res: Result, cfg: Config, title: str = "", path: Optional[str] = None, 
     for s in res.signals[-max_signals:]:
         b = rb[s.index]
         if s.dir == 1:
-            ax.annotate("BUY", (s.index, b.low - pad), ha="center", va="top", fontsize=7, color="white", fontweight="bold", zorder=7,
+            ax.annotate(side_etf(1), (s.index, b.low - pad), ha="center", va="top", fontsize=7, color="white", fontweight="bold", zorder=7,
                         bbox=dict(boxstyle="round,pad=0.25", facecolor=BUY_COL, edgecolor="none"))
         else:
-            ax.annotate("SELL", (s.index, b.high + pad), ha="center", va="bottom", fontsize=7, color="white", fontweight="bold", zorder=7,
+            ax.annotate(side_etf(-1), (s.index, b.high + pad), ha="center", va="bottom", fontsize=7, color="white", fontweight="bold", zorder=7,
                         bbox=dict(boxstyle="round,pad=0.25", facecolor=SELL_COL, edgecolor="none"))
 
     # Trade plan for the latest signal: reward and risk zones plus target/stop lines
@@ -746,7 +829,7 @@ def plot(res: Result, cfg: Config, title: str = "", path: Optional[str] = None, 
         st = res.stats
         lines = [f"State: {state}", f"Shape: {p.shape_name}"]
         if s is not None:
-            lines += [f"Latest: {'BUY' if s.dir == 1 else 'SELL'} {s.ago} bars ago, {s.why}",
+            lines += [f"Latest: {side_etf(s.dir)} {s.ago} bars ago, {s.why}",
                       f"Entry {s.entry:.2f}  T1 {s.t1:.2f}  T2 {s.t2:.2f}  Stop {s.stop:.2f}  R:R {s.rr:.1f}",
                       f"Status: {s.status}"]
         if st.signals:
@@ -781,6 +864,9 @@ def main() -> None:
     ap.add_argument("--end", help="optional profile end date")
     ap.add_argument("--csv", help="read bars from a CSV instead of Yahoo")
     ap.add_argument("--interval", default="1d", help="Yahoo bar interval, e.g. 1d, 1h")
+    ap.add_argument("--cache-ttl", type=float, default=30, help="minutes a Yahoo cache stays fresh before it is topped up (default 30)")
+    ap.add_argument("--refresh", action="store_true", help="ignore the Yahoo cache and download everything again")
+    ap.add_argument("--no-cache", action="store_true", help="do not read or write the Yahoo cache")
     ap.add_argument("--rows", type=int, default=120)
     ap.add_argument("--max-hold", type=int, default=15, help="bars per trade for the History stats")
     ap.add_argument("--t1-horizon", type=int, default=40, help="bars each signal is followed for the bars-to-T1 stats")
@@ -799,7 +885,8 @@ def main() -> None:
         rows=a.rows, max_hold=a.max_hold, t1_horizon=a.t1_horizon, min_rr=a.min_rr, cooldown=a.cooldown,
         stop_mode=a.stop_mode, stop_rule=a.stop_rule, use_pull=not a.no_pullback,
     )
-    bars = load_csv(a.csv) if a.csv else load_yf(a.ticker, cfg.start, a.interval)
+    bars = load_csv(a.csv) if a.csv else load_yf(a.ticker, cfg.start, a.interval, cache_dir=None if a.no_cache else CACHE_DIR,
+                                                  ttl_min=a.cache_ttl, refresh=a.refresh)
     res = SwingFRVP(cfg).run(bars)
     print(report(res, cfg, a.signals))
     if a.plot or a.save:

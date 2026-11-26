@@ -3,3 +3,13 @@ __pycache__/
 *.pyc
 .DS_Store
 .claude/skills/*-workspace/
+
+# deploy
+deploy/build/
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+
+# Yahoo data cache
+.cache/

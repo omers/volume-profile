@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))   # repo root, for swing_frvp
-from swing_frvp import Config, SwingFRVP, load_csv, load_yf, t1_within  # noqa: E402
+from swing_frvp import CACHE_DIR, Config, SwingFRVP, load_csv, load_yf, side_etf, t1_within  # noqa: E402
 
 WINDOWS = [5, 10, 15, 20, 30]
 
@@ -86,7 +86,7 @@ def sweep(ticker: str, anchor: datetime, bars, horizon: int, windows: List[int])
     if s:
         t1, t2, st, _ = rows[-1][1:]
         state = ("T2 hit" if t2 else "stopped" if st else "T1 hit, T2 open" if t1 else "open")
-        print(f"  latest: {s.time:%Y-%m-%d} {'BUY' if s.dir == 1 else 'SELL'} {s.why}  entry {s.entry:.2f}  "
+        print(f"  latest: {s.time:%Y-%m-%d} {side_etf(s.dir)} {s.why}  entry {s.entry:.2f}  "
               f"T1 {s.t1:.2f}  T2 {s.t2:.2f}  stop {s.stop:.2f}  hard {s.hard:.2f}  -> {state} ({len(rb) - 1 - s.index} bars ago)")
     last_bar(cfg, res)
     return need
@@ -94,7 +94,7 @@ def sweep(ticker: str, anchor: datetime, bars, horizon: int, windows: List[int])
 
 def last_bar(cfg: Config, res) -> None:
     """What the last bar did (live, or a setup the filters dropped), and which pullbacks are armed for the next bar."""
-    side = {1: "BUY", -1: "SELL"}
+    side = {1: side_etf(1), -1: side_etf(-1)}
     if res.live_dir:
         print(f"  LIVE on last bar: {side[res.live_dir]} {res.live_why}  entry {res.live_entry:.2f}  "
               f"T1 {res.live_t1:.2f}  T2 {res.live_t2:.2f}  stop {res.live_stop:.2f}  R:R {res.live_rr:.1f}")
@@ -128,11 +128,12 @@ def main() -> None:
     ap.add_argument("--windows", type=int, nargs="+", default=WINDOWS)
     ap.add_argument("--csv")
     ap.add_argument("--interval", default="1d")
+    ap.add_argument("--refresh", action="store_true", help="ignore the Yahoo cache and download everything again")
     a = ap.parse_args()
 
     anchors = ([datetime.fromisoformat(x) for x in a.anchors] if a.anchors else
                sorted({Config().start, today - timedelta(days=91), today - timedelta(days=274)}))
-    bars = load_csv(a.csv) if a.csv else load_yf(a.ticker, min(anchors), a.interval)
+    bars = load_csv(a.csv) if a.csv else load_yf(a.ticker, min(anchors), a.interval, cache_dir=CACHE_DIR, refresh=a.refresh)
     if bars:
         print(f"Last bar {bars[-1].time:%Y-%m-%d}  close {bars[-1].close:.2f}")
     for anc in anchors:
